@@ -2,11 +2,18 @@ package main
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	wl "github.com/dkolbly/wl"
 )
 
-var wlAppId string
+// wlAppId is published by the Wayland listener goroutine and read on FocusIn.
+var wlAppId atomic.Value // string
+
+func getWlAppId() string {
+	appId, _ := wlAppId.Load().(string)
+	return appId
+}
 
 func wlGetFocusWindowClass() error {
 	display, err := wl.Connect("")
@@ -20,8 +27,9 @@ func wlGetFocusWindowClass() error {
 	}
 	for {
 		select {
-		case wlAppId = <-appIdChan:
-			fmt.Println("wlAppId = ", wlAppId)
+		case appId := <-appIdChan:
+			wlAppId.Store(appId)
+			debugf("wlAppId = %s", appId)
 		case display.Context().Dispatch() <- struct{}{}:
 		}
 	}

@@ -28,6 +28,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -38,21 +39,72 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-var dictionary = map[string]bool{}
-var emojiTrie = NewTrie()
+// Lookup data shared by every engine in the process. Readers and the lazy
+// loaders may run on different engines at once, hence the lock.
+var (
+	lookupDataMu sync.RWMutex
+	dictionary   = map[string]bool{}
+	emojiTrie    = NewTrie()
+)
+
+func getEmojiTrie() *TrieNode {
+	lookupDataMu.RLock()
+	defer lookupDataMu.RUnlock()
+	return emojiTrie
+}
+
+func inDictionary(word string) bool {
+	lookupDataMu.RLock()
+	defer lookupDataMu.RUnlock()
+	return dictionary[word]
+}
+
+// ensureEmojiTrie loads the emoji data on first use. A missing data file
+// only disables emoji input; it must not take the input method down.
+func ensureEmojiTrie() {
+	lookupDataMu.Lock()
+	defer lookupDataMu.Unlock()
+	if emojiTrie == nil || len(emojiTrie.Children) > 0 {
+		return
+	}
+	trie, err := loadEmojiOne(DictEmojiOne)
+	if err != nil {
+		log.Printf("failed to load emoji data from %s: %s", DictEmojiOne, err)
+		return
+	}
+	emojiTrie = trie
+}
+
+// ensureDictionary loads the spelling dictionary on first use.
+func ensureDictionary() {
+	lookupDataMu.RLock()
+	loaded := len(dictionary) > 0
+	lookupDataMu.RUnlock()
+	if !loaded {
+		reloadDictionary()
+	}
+}
 
 // sessionInputMode is the mode chosen while the focused window class is
 // unavailable. It lasts for this ibus-bamboo process and is kept out of
 // Config.InputModeMapping, which stores per-application modes.
 var sessionInputMode int32
 
-func GetIBusEngineCreator() func(*dbus.Conn, string) dbus.ObjectPath {
-	go keyPressCapturing()
+// engineDBusMethods maps Go methods to the names exported on D-Bus. The
+// *Msg variants receive the D-Bus message as well, so they are the ones
+// IBus must reach; the plain ones stay for direct callers.
+var engineDBusMethods = map[string]string{
+	"ProcessKeyEventMsg":    "ProcessKeyEvent",
+	"ProcessKeyEvent":       "ProcessKeyEventDirect",
+	"SetSurroundingTextMsg": "SetSurroundingText",
+	"SetSurroundingText":    "SetSurroundingTextDirect",
+}
 
+func GetIBusEngineCreator() func(*dbus.Conn, string) dbus.ObjectPath {
 	return func(conn *dbus.Conn, ngName string) dbus.ObjectPath {
 		var ngGroupName = strings.Split(ngName, "::")[0]
 		var engineName = strings.ToLower(ngGroupName)
-		fmt.Printf("Got engine name: %s", engineName)
+		debugf("Got engine name: %s", engineName)
 		var cfg = config.LoadConfig(engineName)
 		var objectPath = dbus.ObjectPath(fmt.Sprintf("/org/freedesktop/IBus/Engine/%s/%d", engineName, time.Now().UnixNano()))
 		var inputMethod = bamboo.ParseInputMethod(cfg.InputMethodDefinitions, cfg.InputMethod)
@@ -61,6 +113,9 @@ func GetIBusEngineCreator() func(*dbus.Conn, string) dbus.ObjectPath {
 		engine.propList = GetPropListByConfig(cfg)
 		engine.shouldEnqueuKeyStrokes = true
 		ibus.PublishEngine(conn, objectPath, engine)
+		if err := conn.ExportWithMap(engine, engineDBusMethods, objectPath, ibus.IBUS_IFACE_ENGINE); err != nil {
+			log.Printf("failed to export the engine methods: %s", err)
+		}
 		if *gui {
 			ui.OpenGUI(engine.engineName)
 			os.Exit(0)
@@ -87,10 +142,12 @@ func (e *IBusBambooEngine) init() {
 	if err := initConfigFiles(e.engineName); err != nil {
 		log.Printf("failed to prepare config files: %s", err)
 	}
-	if e.config.IBflags&config.IBmacroEnabled != 0 {
+	e.Lock()
+	macroEnabled := e.config.IBflags&config.IBmacroEnabled != 0
+	e.Unlock()
+	if macroEnabled {
 		e.macroTable.Enable(e.engineName)
 	}
-	keyPressHandler = e.keyPressForwardHandler
 }
 
 func initConfigFiles(engineName string) error {
@@ -121,29 +178,89 @@ func reloadDictionary() {
 		log.Printf("failed to load dictionary from %s: %s", DictVietnameseCm, err)
 		return
 	}
+	lookupDataMu.Lock()
 	dictionary = dict
+	lookupDataMu.Unlock()
 }
 
-var keyPressHandler = func(keyVal, keyCode, state uint32) {}
-var keyPressChan = make(chan [3]uint32, 100)
-var lenKeyChan int32
-
-func keyPressCapturing() {
-	for keyEvents := range keyPressChan {
-		atomic.StoreInt32(&lenKeyChan, int32(len(keyPressChan)))
-
-		var keyVal, keyCode, state = keyEvents[0], keyEvents[1], keyEvents[2]
-		keyPressHandler(keyVal, keyCode, state)
-
-		atomic.AddInt32(&lenKeyChan, -1)
+// keyPressCapturing handles this engine's queued keys one at a time, in the
+// order they were typed. It takes the engine lock per key, never while
+// waiting on the channel.
+func (e *IBusBambooEngine) keyPressCapturing() {
+	for {
+		select {
+		case <-e.done:
+			return
+		case keyEvents := <-e.keyPressChan:
+			e.Lock()
+			e.keyPressForwardHandler(keyEvents[0], keyEvents[1], keyEvents[2])
+			e.Unlock()
+			atomic.AddInt32(&e.pendingKeys, -1)
+		}
 	}
 }
 
-var sleep = func() {
-	var i = 0
-	for i < 10 && atomic.LoadInt32(&lenKeyChan) > 0 {
-		i++
-		time.Sleep(5 * time.Millisecond)
+// enqueueKeyPress queues a key for keyPressCapturing. The caller holds the
+// engine lock; it is released only if the queue is full, since the queue
+// goroutine needs it to make room.
+func (e *IBusBambooEngine) enqueueKeyPress(keyVal, keyCode, state uint32) {
+	var keyEvents = [3]uint32{keyVal, keyCode, state}
+	atomic.AddInt32(&e.pendingKeys, 1)
+	select {
+	case e.keyPressChan <- keyEvents:
+		return
+	default:
+	}
+	e.Unlock()
+	defer e.Lock()
+	select {
+	case e.keyPressChan <- keyEvents:
+	case <-e.done:
+		atomic.AddInt32(&e.pendingKeys, -1)
+	}
+}
+
+// dequeueKeyPress takes the next queued key, if any, without blocking.
+func (e *IBusBambooEngine) dequeueKeyPress() ([3]uint32, bool) {
+	select {
+	case keyEvents := <-e.keyPressChan:
+		atomic.AddInt32(&e.pendingKeys, -1)
+		return keyEvents, true
+	default:
+		return [3]uint32{}, false
+	}
+}
+
+const (
+	queueDrainPolls    = 10
+	queueDrainInterval = 5 * time.Millisecond
+)
+
+// waitForQueueDrain gives the queue goroutine a short, bounded time to
+// finish the keys typed before the current one. The caller holds the engine
+// lock; it is released while waiting because that goroutine needs it.
+func (e *IBusBambooEngine) waitForQueueDrain() {
+	if atomic.LoadInt32(&e.pendingKeys) <= 0 {
+		return
+	}
+	e.Unlock()
+	defer e.Lock()
+	for i := 0; i < queueDrainPolls && atomic.LoadInt32(&e.pendingKeys) > 0; i++ {
+		time.Sleep(queueDrainInterval)
+	}
+}
+
+// consumeFakeBackspace reports whether a BackSpace key event is one of the
+// backspaces this engine injected through XTest, and counts it off.
+func (e *IBusBambooEngine) consumeFakeBackspace() bool {
+	for {
+		n := atomic.LoadInt32(&e.nFakeBackSpace)
+		if n <= 0 {
+			return false
+		}
+		if atomic.CompareAndSwapInt32(&e.nFakeBackSpace, n, n-1) {
+			return true
+		}
 	}
 }
 
@@ -160,9 +277,14 @@ func (e *IBusBambooEngine) resetBuffer() {
 
 func (e *IBusBambooEngine) checkWmClass(newId string) {
 	if e.wmClasses != newId {
-		e.wmClasses = newId
+		// Flush with the input mode of the window being left. Looking the
+		// mode up after the switch could treat text already committed in a
+		// backspace mode as pending preedit and commit it again into the
+		// window that just got the focus.
 		e.resetBuffer()
 		e.resetFakeBackspace()
+		e.needSurroundingSync = false
+		e.wmClasses = newId
 	}
 }
 
@@ -350,16 +472,16 @@ func (e *IBusBambooEngine) ltProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 	}
 	var keyRune = rune(keyVal)
 	if keyVal == IBusLeft || keyVal == IBusUp {
-		e.CursorUp()
+		e.cursorUp()
 		return true, true
 	} else if keyVal == IBusRight || keyVal == IBusDown {
-		e.CursorDown()
+		e.cursorDown()
 		return true, true
 	} else if keyVal == IBusPageUp {
-		e.PageUp()
+		e.pageUp()
 		return true, true
 	} else if keyVal == IBusPageDown {
-		e.PageDown()
+		e.pageDown()
 		return true, true
 	}
 	if keyVal == IBusReturn {
@@ -585,10 +707,6 @@ func (e *IBusBambooEngine) setFakeBackspace(n int32) {
 	atomic.StoreInt32(&e.nFakeBackSpace, n)
 }
 
-func (e *IBusBambooEngine) addFakeBackspace(n int32) {
-	atomic.AddInt32(&e.nFakeBackSpace, n)
-}
-
 func (e *IBusBambooEngine) isValidKeyVal(keyVal uint32) bool {
 	var keyRune = rune(keyVal)
 	if keyVal == IBusBackSpace || bamboo.IsWordBreakSymbol(keyRune) {
@@ -623,7 +741,7 @@ func (e *IBusBambooEngine) getLatestWmClass() string {
 	if isGnome {
 		wmClass, _ = gnomeGetFocusWindowClass()
 	} else if isWayland {
-		wmClass = wlAppId
+		wmClass = getWlAppId()
 	}
 	if wmClass == "" {
 		wmClass = x11GetFocusWindowClass()
@@ -645,13 +763,13 @@ func notify(enMode bool) {
 	}
 	conn, err := dbus.SessionBus()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 	obj := conn.Object("org.freedesktop.Notifications", "/org/freedesktop/Notifications")
 	call := obj.Call("org.freedesktop.Notifications.Notify", 0, "", uint32(281025),
 		"", title, msg, []string{}, map[string]dbus.Variant{}, int32(3000))
 	if call.Err != nil {
-		fmt.Println(call.Err)
+		log.Println(call.Err)
 	}
 }

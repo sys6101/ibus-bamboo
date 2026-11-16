@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sync"
+
 	ibus "github.com/BambooEngine/goibus"
 	"github.com/godbus/dbus/v5"
 )
@@ -47,7 +49,10 @@ type IEngine interface {
 	RequireSurroundingText()
 }
 
+// fakeEngine records what the engine sends to IBus. The key queue goroutine
+// writes to it while tests read, so mutations and snapshots take mu.
 type fakeEngine struct {
+	mu                  sync.Mutex
 	commitText          string
 	preeditText         string
 	committed           bool
@@ -56,6 +61,13 @@ type fakeEngine struct {
 	isHideLookupTable   bool
 	isReset             bool
 	forwardKeyEvent     [3]uint32
+}
+
+// committedText returns everything committed so far.
+func (e *fakeEngine) committedText() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.commitText
 }
 
 func NewFakeEngine() *fakeEngine {
@@ -92,6 +104,8 @@ func (e *fakeEngine) FocusOut() *dbus.Error {
 }
 
 func (e *fakeEngine) Reset() *dbus.Error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.isReset = true
 	return nil
 }
@@ -153,19 +167,27 @@ func (e *fakeEngine) Destroy() *dbus.Error {
 
 // @signal(signature="v")
 func (e *fakeEngine) CommitText(text *ibus.Text) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.commitText += text.Text
 }
 
 // @signal(signature="uuu")
 func (e *fakeEngine) ForwardKeyEvent(keyval uint32, keycode uint32, state uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.forwardKeyEvent = [3]uint32{keyval, keycode, state}
 }
 
 // @signal(signature="vubu")
 func (e *fakeEngine) UpdatePreeditText(text *ibus.Text, cursor_pos uint32, visible bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.preeditText = text.Text
 }
 func (e *fakeEngine) UpdatePreeditTextWithMode(text *ibus.Text, cursor_pos uint32, visible bool, mode uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.preeditText = text.Text
 }
 
@@ -175,6 +197,8 @@ func (e *fakeEngine) ShowPreeditText() {
 
 // @signal()
 func (e *fakeEngine) HidePreeditText() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.preeditText = ""
 	e.isHidePreeditText = true
 }
@@ -185,11 +209,15 @@ func (e *fakeEngine) UpdateAuxiliaryText(text *ibus.Text, visible bool) {
 
 // @signal()
 func (e *fakeEngine) ShowAuxiliaryText() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.isHideAuxiliaryText = false
 }
 
 // @signal()
 func (e *fakeEngine) HideAuxiliaryText() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.isHideAuxiliaryText = true
 }
 
@@ -199,11 +227,15 @@ func (e *fakeEngine) UpdateLookupTable(lookup_table *ibus.LookupTable, visible b
 
 // @signal()
 func (e *fakeEngine) ShowLookupTable() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.isHideLookupTable = false
 }
 
 // @signal()
 func (e *fakeEngine) HideLookupTable() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.isHideLookupTable = true
 }
 

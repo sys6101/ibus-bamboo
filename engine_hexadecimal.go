@@ -62,7 +62,7 @@ func (e *IBusBambooEngine) hexadecimalProcessKeyEvent(keyVal uint32, keyCode uin
 			if err != nil || value > 0x10ffff {
 				log.Println("Input is out of range")
 			} else {
-				log.Printf("Commit Text [%s]\n", fmt.Sprint(value))
+				debugf("Commit Text [%s]", fmt.Sprint(value))
 				e.CommitText(ibus.NewText(fmt.Sprint(value)))
 			}
 		}

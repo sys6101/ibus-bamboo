@@ -20,12 +20,10 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"os/exec"
-	"reflect"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/BambooEngine/bamboo-core"
 	ibus "github.com/BambooEngine/goibus"
@@ -38,34 +36,93 @@ import (
 type IBusBambooEngine struct {
 	sync.Mutex
 	IEngine
-	preeditor              bamboo.IEngine
-	engineName             string
-	config                 *config.Config
-	propList               *ibus.PropList
-	englishMode            bool
-	macroTable             *MacroTable
-	wmClasses              string
-	isInputModeLTOpened    bool
-	isEmojiLTOpened        bool
-	isInHexadecimal        bool
-	emojiLookupTable       *ibus.LookupTable
-	inputModeLookupTable   *ibus.LookupTable
-	capabilities           uint32
-	keyPressDelay          int
-	nFakeBackSpace         int32
-	isFirstTimeSendingBS   bool
-	emoji                  *EmojiEngine
-	isSurroundingTextReady bool
-	lastKeyWithShift       bool
-	lastCommitText         int64
+	preeditor            bamboo.IEngine
+	engineName           string
+	config               *config.Config
+	propList             *ibus.PropList
+	englishMode          bool
+	macroTable           *MacroTable
+	wmClasses            string
+	isInputModeLTOpened  bool
+	isEmojiLTOpened      bool
+	isInHexadecimal      bool
+	emojiLookupTable     *ibus.LookupTable
+	inputModeLookupTable *ibus.LookupTable
+	capabilities         uint32
+	keyPressDelay        int
+	nFakeBackSpace       int32
+	isFirstTimeSendingBS bool
+	emoji                *EmojiEngine
+	// needSurroundingSync is set when the cursor may have moved: the next
+	// key first rebuilds the composition buffer from the text before the
+	// cursor (see syncWithSurroundingText).
+	needSurroundingSync bool
+	surrounding         surroundingText
+	lastKeySerial       uint32 // serial of the previous key event, atomic
+	localSerial         uint32 // serials for calls that carry none, atomic
+	lastKeyWithShift    bool
+	lastCommitText      int64
 	// restore key strokes by pressing Shift + Space
 	shouldRestoreKeyStrokes bool
 	// enqueue key strokes to process later
 	shouldEnqueuKeyStrokes bool
+	// Each engine owns its key queue and the goroutine draining it, so two
+	// engines (Bamboo and BambooUs, or a re-created engine) can never
+	// handle each other's keystrokes.
+	keyPressChan chan [3]uint32
+	// pendingKeys counts keys that are queued or being handled by the
+	// queue goroutine. It is read without the engine lock.
+	pendingKeys int32
+	done        chan struct{}
+	destroyOnce sync.Once
+	// keyGate admits key events one at a time, in arrival order.
+	keyGate *fifoGate
 }
 
+// fifoGate lets goroutines through one at a time in the order they arrived.
+// A sync.Mutex does not promise that order: with several key events waiting
+// behind the queue goroutine, a later key could get in first and the typed
+// text came out scrambled.
+type fifoGate struct {
+	mu      sync.Mutex
+	turn    *sync.Cond
+	next    uint64 // ticket handed to the next arrival
+	serving uint64 // ticket currently allowed through
+}
+
+func newFifoGate() *fifoGate {
+	g := &fifoGate{}
+	g.turn = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *fifoGate) enter() {
+	g.mu.Lock()
+	ticket := g.next
+	g.next++
+	for g.serving != ticket {
+		g.turn.Wait()
+	}
+	g.mu.Unlock()
+}
+
+func (g *fifoGate) leave() {
+	g.mu.Lock()
+	g.serving++
+	g.mu.Unlock()
+	g.turn.Broadcast()
+}
+
+// Locking: IBus calls the methods below from one goroutine per D-Bus message,
+// and the key queue goroutine runs alongside them. The embedded mutex guards
+// all engine state. Exported IBus methods take it; every other method expects
+// the caller to hold it. Blocking work (window class lookup, the settings GUI,
+// waiting for the key queue) is done with the lock released.
+
+const keyQueueSize = 100
+
 func NewIbusBambooEngine(name string, cfg *config.Config, base IEngine, preeditor bamboo.IEngine) *IBusBambooEngine {
-	return &IBusBambooEngine{
+	e := &IBusBambooEngine{
 		engineName: name,
 		IEngine:    base,
 		preeditor:  preeditor,
@@ -74,7 +131,19 @@ func NewIbusBambooEngine(name string, cfg *config.Config, base IEngine, preedito
 		// focus event can never see a nil emoji engine or macro table.
 		emoji:      NewEmojiEngine(),
 		macroTable: NewMacroTable(cfg.IBflags&config.IBautoCapitalizeMacro != 0),
+
+		keyPressChan: make(chan [3]uint32, keyQueueSize),
+		done:         make(chan struct{}),
+		keyGate:      newFifoGate(),
 	}
+	go e.keyPressCapturing()
+	return e
+}
+
+// Destroy stops the key queue goroutine before the engine is unexported.
+func (e *IBusBambooEngine) Destroy() *dbus.Error {
+	e.destroyOnce.Do(func() { close(e.done) })
+	return e.IEngine.Destroy()
 }
 
 /*
@@ -97,50 +166,93 @@ Return:
 This function gets called whenever a key is pressed.
 */
 func (e *IBusBambooEngine) ProcessKeyEvent(keyVal uint32, keyCode uint32, state uint32) (bool, *dbus.Error) {
+	return e.processKeyEvent(keyVal, keyCode, state, e.nextLocalSerial())
+}
+
+// ProcessKeyEventMsg is ProcessKeyEvent as exported on D-Bus: it also takes
+// the message, whose serial orders the call against SetSurroundingText.
+func (e *IBusBambooEngine) ProcessKeyEventMsg(keyVal uint32, keyCode uint32, state uint32, msg dbus.Message) (bool, *dbus.Error) {
+	return e.processKeyEvent(keyVal, keyCode, state, msg.Serial())
+}
+
+// keyArrival describes the moment a key event reached the engine.
+type keyArrival struct {
+	// queueWasBusy tells whether earlier keys were still being handled.
+	queueWasBusy bool
+	// serial and prevSerial are the D-Bus serials of this key event and of
+	// the one before it.
+	serial, prevSerial uint32
+}
+
+func (e *IBusBambooEngine) processKeyEvent(keyVal, keyCode, state, serial uint32) (bool, *dbus.Error) {
+	var arrival = keyArrival{serial: serial, prevSerial: atomic.SwapUint32(&e.lastKeySerial, serial)}
 	if state&IBusReleaseMask != 0 {
 		// fmt.Println("Ignore key-up event")
 		return false, nil
 	}
-	fmt.Printf("\n")
-	log.Printf(">>>>ProcessKeyEvent >  %d | state %d keyVal 0x%04x | %c <<<<\n", len(keyPressChan), state, keyVal, rune(keyVal))
+	if keyVal == IBusBackSpace && e.consumeFakeBackspace() {
+		// One of our own XTest backspaces coming back. It is acknowledged
+		// without the engine lock: the queue goroutine holds that lock
+		// while it waits for exactly these events to pass through.
+		return false, nil
+	}
+	// A key that arrives while earlier keys are still being handled must
+	// follow them through the queue. Deciding that only after waiting for
+	// the lock would let it take the direct path right behind them, and
+	// its reply would race the text they commit.
+	arrival.queueWasBusy = atomic.LoadInt32(&e.pendingKeys) > 0
+	// Keys take a ticket first so they are handled in the order typed, then
+	// the engine lock, which they may release while waiting for the queue.
+	e.keyGate.enter()
+	defer e.keyGate.leave()
+	e.Lock()
+	defer e.Unlock()
+	debugf(">>>>ProcessKeyEvent >  %d | state %d keyVal 0x%04x | %c <<<<", atomic.LoadInt32(&e.pendingKeys), state, keyVal, rune(keyVal))
 	if ret, retValue := e.processShortcutKey(keyVal, keyCode, state); ret {
 		return retValue, nil
 	}
 	if e.inBackspaceWhiteList() {
-		return e.bsProcessKeyEvent(keyVal, keyCode, state)
+		return e.bsProcessKeyEvent(keyVal, keyCode, state, arrival)
 	}
 	return e.preeditProcessKeyEvent(keyVal, keyCode, state)
 }
 
+func (e *IBusBambooEngine) nextLocalSerial() uint32 {
+	return atomic.AddUint32(&e.localSerial, 1)
+}
+
 func (e *IBusBambooEngine) FocusIn() *dbus.Error {
-	log.Print("FocusIn.")
+	debugf("FocusIn.")
+	// The window class lookup talks to X11 or D-Bus; keep it off the lock.
 	var latestWm = e.getLatestWmClass()
+	e.Lock()
 	e.checkWmClass(latestWm)
-	e.RegisterProperties(e.propList)
+	var propList = e.propList
+	var needEmoji = e.isShortcutKeyEnable(KSEmojiDialog)
+	var needDictionary = e.config.IBflags&config.IBspellCheckWithDicts != 0
+	e.Unlock()
+
+	e.RegisterProperties(propList)
 	e.RequireSurroundingText()
-	if e.isShortcutKeyEnable(KSEmojiDialog) && emojiTrie != nil && len(emojiTrie.Children) == 0 {
-		// A missing data file only disables emoji input; it must not take
-		// the whole input method down.
-		if trie, err := loadEmojiOne(DictEmojiOne); err != nil {
-			log.Printf("failed to load emoji data from %s: %s", DictEmojiOne, err)
-		} else {
-			emojiTrie = trie
-		}
+	if needEmoji {
+		ensureEmojiTrie()
 	}
-	if e.config.IBflags&config.IBspellCheckWithDicts != 0 && len(dictionary) == 0 {
-		reloadDictionary()
+	if needDictionary {
+		ensureDictionary()
 	}
-	fmt.Printf("WM_CLASS=(%s)\n", e.getWmClass())
+	debugf("WM_CLASS=(%s)", latestWm)
 	return nil
 }
 
 func (e *IBusBambooEngine) FocusOut() *dbus.Error {
-	log.Print("FocusOut.")
+	debugf("FocusOut.")
 	return nil
 }
 
 func (e *IBusBambooEngine) Reset() *dbus.Error {
-	fmt.Print("Reset.\n")
+	debugf("Reset.")
+	e.Lock()
+	defer e.Unlock()
 	if e.checkInputMode(config.PreeditIM) {
 		e.preeditor.Reset()
 	}
@@ -148,91 +260,95 @@ func (e *IBusBambooEngine) Reset() *dbus.Error {
 }
 
 func (e *IBusBambooEngine) Enable() *dbus.Error {
-	fmt.Print("Enable.")
+	debugf("Enable.")
 	e.RequireSurroundingText()
 	return nil
 }
 
 func (e *IBusBambooEngine) Disable() *dbus.Error {
-	fmt.Print("Disable.")
+	debugf("Disable.")
 	return nil
 }
 
 // @method(in_signature="vuu")
 func (e *IBusBambooEngine) SetSurroundingText(text dbus.Variant, cursorPos uint32, anchorPos uint32) *dbus.Error {
-	if !e.isSurroundingTextReady {
-		//fmt.Println("Surrounding Text is not ready yet.")
-		return nil
-	}
-	e.Lock()
-	defer func() {
-		e.Unlock()
-		e.isSurroundingTextReady = false
-		if err := recover(); err != nil {
-			fmt.Println(err)
-		}
-	}()
-	if e.inBackspaceWhiteList() {
-		var str = reflect.ValueOf(reflect.ValueOf(text.Value()).Index(2).Interface()).String()
-		var s = []rune(str)
-		if len(s) < int(cursorPos) {
-			return nil
-		}
-		var cs = s[:cursorPos]
-		fmt.Println("Surrounding Text: ", string(cs))
-		e.preeditor.Reset()
-		for i := len(cs) - 1; i >= 0; i-- {
-			// workaround for spell checking
-			if bamboo.IsPunctuationMark(cs[i]) && e.preeditor.CanProcessKey(cs[i]) {
-				cs[i] = ' '
-			}
-			e.preeditor.ProcessKey(cs[i], bamboo.EnglishMode|bamboo.InReverseOrder)
-		}
-	}
+	e.setSurroundingText(text, cursorPos, anchorPos, e.nextLocalSerial())
+	return nil
+}
+
+// SetSurroundingTextMsg is SetSurroundingText as exported on D-Bus.
+func (e *IBusBambooEngine) SetSurroundingTextMsg(text dbus.Variant, cursorPos uint32, anchorPos uint32, msg dbus.Message) *dbus.Error {
+	e.setSurroundingText(text, cursorPos, anchorPos, msg.Serial())
 	return nil
 }
 
 func (e *IBusBambooEngine) PageUp() *dbus.Error {
+	e.Lock()
+	defer e.Unlock()
+	e.pageUp()
+	return nil
+}
+
+func (e *IBusBambooEngine) PageDown() *dbus.Error {
+	e.Lock()
+	defer e.Unlock()
+	e.pageDown()
+	return nil
+}
+
+func (e *IBusBambooEngine) CursorUp() *dbus.Error {
+	e.Lock()
+	defer e.Unlock()
+	e.cursorUp()
+	return nil
+}
+
+func (e *IBusBambooEngine) CursorDown() *dbus.Error {
+	e.Lock()
+	defer e.Unlock()
+	e.cursorDown()
+	return nil
+}
+
+func (e *IBusBambooEngine) pageUp() {
 	if e.isEmojiLTOpened && e.emojiLookupTable.PageUp() {
 		e.updateEmojiLookupTable()
 	}
 	if e.isInputModeLTOpened && e.inputModeLookupTable.PageUp() {
 		e.updateInputModeLT()
 	}
-	return nil
 }
 
-func (e *IBusBambooEngine) PageDown() *dbus.Error {
+func (e *IBusBambooEngine) pageDown() {
 	if e.isEmojiLTOpened && e.emojiLookupTable.PageDown() {
 		e.updateEmojiLookupTable()
 	}
 	if e.isInputModeLTOpened && e.inputModeLookupTable.PageDown() {
 		e.updateInputModeLT()
 	}
-	return nil
 }
 
-func (e *IBusBambooEngine) CursorUp() *dbus.Error {
+func (e *IBusBambooEngine) cursorUp() {
 	if e.isEmojiLTOpened && e.emojiLookupTable.CursorUp() {
 		e.updateEmojiLookupTable()
 	}
 	if e.isInputModeLTOpened && e.inputModeLookupTable.CursorUp() {
 		e.updateInputModeLT()
 	}
-	return nil
 }
 
-func (e *IBusBambooEngine) CursorDown() *dbus.Error {
+func (e *IBusBambooEngine) cursorDown() {
 	if e.isEmojiLTOpened && lookupTableCursorDown(e.emojiLookupTable) {
 		e.updateEmojiLookupTable()
 	}
 	if e.isInputModeLTOpened && lookupTableCursorDown(e.inputModeLookupTable) {
 		e.updateInputModeLT()
 	}
-	return nil
 }
 
 func (e *IBusBambooEngine) CandidateClicked(index uint32, button uint32, state uint32) *dbus.Error {
+	e.Lock()
+	defer e.Unlock()
 	if e.isEmojiLTOpened && e.updateCursorPosInEmojiTable(index) {
 		e.commitEmojiCandidate()
 		e.closeEmojiCandidates()
@@ -245,7 +361,9 @@ func (e *IBusBambooEngine) CandidateClicked(index uint32, button uint32, state u
 }
 
 func (e *IBusBambooEngine) SetCapabilities(cap uint32) *dbus.Error {
+	e.Lock()
 	e.capabilities = cap
+	e.Unlock()
 	return nil
 }
 
@@ -267,21 +385,18 @@ func (e *IBusBambooEngine) PropertyActivate(propName string, propState uint32) *
 		exec.Command("xdg-open", CharsetConvertPage).Start()
 		return nil
 	}
-	if propName == PropKeyConfiguration {
+	if propName == PropKeyConfiguration || propName == PropKeyInputModeLookupTableShortcut || propName == PropKeyMacroTable {
+		// The settings window blocks until it is closed: keep typing
+		// possible meanwhile by leaving the engine unlocked.
 		ui.OpenGUI(e.engineName)
-		e.config = config.LoadConfig(e.engineName)
+		cfg := config.LoadConfig(e.engineName)
+		e.Lock()
+		e.config = cfg
+		e.Unlock()
 		return nil
 	}
-	if propName == PropKeyInputModeLookupTableShortcut {
-		ui.OpenGUI(e.engineName)
-		e.config = config.LoadConfig(e.engineName)
-		return nil
-	}
-	if propName == PropKeyMacroTable {
-		ui.OpenGUI(e.engineName)
-		e.config = config.LoadConfig(e.engineName)
-		return nil
-	}
+	e.Lock()
+	defer e.Unlock()
 
 	turnSpellChecking := func(on bool) {
 		if on {

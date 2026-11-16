@@ -21,7 +21,6 @@ package main
 
 import (
 	"ibus-bamboo/config"
-	"log"
 	"strings"
 	"time"
 
@@ -162,7 +161,7 @@ func (e *IBusBambooEngine) mustFallbackToEnglish() bool {
 		return false
 	}
 	if e.config.IBflags&config.IBspellCheckWithDicts != 0 {
-		return !dictionary[vnSeq]
+		return !inDictionary(vnSeq)
 	}
 	return !e.preeditor.IsValid(true)
 }
@@ -225,7 +224,7 @@ func (e *IBusBambooEngine) commitText(str string) {
 	if str == "" {
 		return
 	}
-	log.Printf("Commit Text [%s]\n", str)
+	debugf("Commit Text [%s]", str)
 	var now = time.Now()
 	e.lastCommitText = now.UnixNano()
 	e.CommitText(ibus.NewText(e.encodeText(str)))

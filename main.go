@@ -37,6 +37,7 @@ const (
 var embedded = flag.Bool("ibus", false, "Run the embedded ibus component")
 var version = flag.Bool("version", false, "Show version")
 var gui = flag.Bool("gui", false, "Show GUI")
+var debug = flag.Bool("debug", false, "Log key events and committed text (same as IBUS_BAMBOO_DEBUG=1)")
 var isWayland = false
 var isGnome = false
 
@@ -52,6 +53,9 @@ func main() {
 		isGnome = true
 	}
 	flag.Parse()
+	if *debug {
+		debugEnabled = true
+	}
 	if *embedded {
 		os.Chdir(DataDir)
 	}

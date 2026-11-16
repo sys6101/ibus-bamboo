@@ -72,16 +72,16 @@ func (e *IBusBambooEngine) emojiProcessKeyEvent(keyVal uint32, keyCode uint32, s
 		return false
 	}
 	if keyVal == IBusLeft || keyVal == IBusUp {
-		e.CursorUp()
+		e.cursorUp()
 		return true
 	} else if keyVal == IBusRight || keyVal == IBusDown {
-		e.CursorDown()
+		e.cursorDown()
 		return true
 	} else if keyVal == IBusPageUp {
-		e.PageUp()
+		e.pageUp()
 		return true
 	} else if keyVal == IBusPageDown {
-		e.PageDown()
+		e.pageDown()
 		return true
 	}
 	if keyVal == IBusBackSpace {
