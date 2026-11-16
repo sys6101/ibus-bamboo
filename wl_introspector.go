@@ -25,8 +25,6 @@ func wlGetFocusWindowClass() error {
 		case display.Context().Dispatch() <- struct{}{}:
 		}
 	}
-	display.Context().Close()
-	return nil
 }
 
 func registerGlobals(display *wl.Display, appIdChan chan string) error {

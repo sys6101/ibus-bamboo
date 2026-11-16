@@ -80,11 +80,10 @@ func (be *EmojiEngine) Filter(s string) []string {
 	for key := range lookup {
 		keys = append(keys, key)
 	}
-	var names = byString(keys)
-	sort.Sort(names)
-	for _, name := range names {
-		var cps = byString(strings.Split(lookup[name], ":"))
-		sort.Sort(cps)
+	sort.Strings(keys)
+	for _, name := range keys {
+		var cps = strings.Split(lookup[name], ":")
+		sort.Strings(cps)
 		for _, cp := range cps {
 			codePoints = append(codePoints, cp)
 		}

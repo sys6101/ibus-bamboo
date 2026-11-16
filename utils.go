@@ -23,7 +23,6 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -118,25 +117,6 @@ func inStringList(list []string, str string) bool {
 	return false
 }
 
-func removeFromWhiteList(list []string, classes string) []string {
-	var newList []string
-	for _, cl := range list {
-		if cl != classes {
-			newList = append(newList, cl)
-		}
-	}
-	return newList
-}
-
-func addToWhiteList(list []string, classes string) []string {
-	for _, cl := range list {
-		if cl == classes {
-			return list
-		}
-	}
-	return append(list, classes)
-}
-
 func getValueFromPropKey(str, key string) (string, bool) {
 	var arr = strings.Split(str, "::")
 	if len(arr) == 2 && arr[0] == key {
@@ -153,24 +133,6 @@ func isValidCharset(str string) bool {
 		}
 	}
 	return false
-}
-
-type byString []string
-
-func (s byString) Less(i, j int) bool {
-	return s[i] < s[j]
-}
-func (s byString) Len() int {
-	return len(s)
-}
-func (s byString) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func sortStrings(list []string) []string {
-	var strList = byString(list)
-	sort.Sort(strList)
-	return strList
 }
 
 func loadDictionary(dataFiles ...string) (map[string]bool, error) {

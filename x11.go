@@ -24,74 +24,17 @@ package main
 #cgo LDFLAGS: -lX11 -lXtst -pthread
 #include <stdlib.h>
 
-extern void x11Copy(char*);
-extern void x11Paste(int);
-extern void clipboard_init();
-extern void clipboard_exit();
-extern void x11ClipboardReset();
 extern void x11SendBackspace(int n, int timeout);
-extern void x11SendShiftR();
-extern void x11SendShiftLeft(int n, int r, int timeout);
 extern void setXIgnoreErrorHandler();
 extern char* x11GetFocusWindowClass();
-extern void x11StartWindowInspector();
-extern void x11StopWindowInspector();
 */
 import "C"
 import (
-	"sync"
 	"unsafe"
-)
-
-var (
-	mcapRunning bool
-	mcapMutex   sync.RWMutex
 )
 
 func init() {
 	C.setXIgnoreErrorHandler()
-}
-
-func x11StartWindowInspector() {
-	C.x11StartWindowInspector()
-}
-
-func x11StopWindowInspector() {
-	C.x11StopWindowInspector()
-}
-
-func x11Copy(str string) {
-	cs := C.CString(str)
-	defer C.free(unsafe.Pointer(cs))
-	C.x11Copy(cs)
-}
-
-func x11ClipboardInit() {
-	C.clipboard_init()
-}
-
-func x11ClipboardExit() {
-	C.clipboard_exit()
-}
-
-func x11ClipboardReset() {
-	C.x11ClipboardReset()
-}
-
-func x11Paste(n int) {
-	C.x11Paste(C.int(n))
-}
-
-func x11SendShiftR() {
-	C.x11SendShiftR()
-}
-
-func x11SendShiftLeft(n int, shiftRightIsPressing bool, timeout int) {
-	var r = 0
-	if shiftRightIsPressing {
-		r = 1
-	}
-	C.x11SendShiftLeft(C.int(n), C.int(r), C.int(timeout))
 }
 
 func x11SendBackspace(n int, timeout int) {
