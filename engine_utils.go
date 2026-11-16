@@ -304,10 +304,10 @@ func (e *IBusBambooEngine) openLookupTable() {
 	lt := ibus.NewLookupTable()
 	lt.PageSize = uint32(len(config.ImLookupTable))
 	lt.Orientation = IBusOrientationVertical
+	var activeMode = e.getInputMode()
 	for im := 1; im <= len(config.ImLookupTable); im++ {
-		if e.getInputMode() == im {
+		if activeMode == im {
 			lt.AppendLabel("*")
-			lt.SetCursorPos(uint32(im - 1))
 		} else {
 			lt.AppendLabel(strconv.Itoa(im))
 		}
@@ -324,6 +324,8 @@ func (e *IBusBambooEngine) openLookupTable() {
 			lt.AppendCandidate(config.ImLookupTable[im])
 		}
 	}
+	// The cursor can only be placed once the candidates exist.
+	lt.SetCursorPos(uint32(activeMode - 1))
 	e.inputModeLookupTable = lt
 	e.UpdateLookupTable(lt, true)
 }
@@ -366,13 +368,19 @@ func (e *IBusBambooEngine) ltProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 		}
 	}
 	if keyVal == IBusEscape {
+		// Consume Escape: it only dismisses the table and must not also
+		// reach the application (it would cancel the focused dialog).
 		e.closeInputModeCandidates()
+		return true, true
 	}
 	return true, false
 }
 
 func (e *IBusBambooEngine) commitInputModeCandidate() {
 	var im = int(e.inputModeLookupTable.CursorPos + 1)
+	if config.ImLookupTable[im] == "" {
+		return
+	}
 	if im == config.UsIM && e.getInputMode() == config.UsIM {
 		e.removeInputModeExclusion()
 	} else if wmClass := e.getWmClass(); wmClass != "" {
@@ -404,11 +412,29 @@ func (e *IBusBambooEngine) removeInputModeExclusion() {
 
 func (e *IBusBambooEngine) closeInputModeCandidates() {
 	e.inputModeLookupTable = nil
-	e.UpdateLookupTable(ibus.NewLookupTable(), true) // workaround for issue #18
+	e.clearLookupTable()
 	e.HidePreeditText()
 	e.HideLookupTable()
 	e.HideAuxiliaryText()
 	e.isInputModeLTOpened = false
+}
+
+// clearLookupTable replaces the panel's table with an empty one (workaround
+// for issue #18) without asking the panel to show it: panels that honor the
+// visible flag would otherwise keep an empty table on screen (issue #593).
+func (e *IBusBambooEngine) clearLookupTable() {
+	e.UpdateLookupTable(ibus.NewLookupTable(), false)
+}
+
+// lookupTableCursorDown moves the cursor to the next candidate. Unlike
+// LookupTable.CursorDown it never moves past the last one, which would leave
+// the panel on an empty page and commit a candidate that does not exist.
+func lookupTableCursorDown(lt *ibus.LookupTable) bool {
+	if int(lt.CursorPos)+1 >= len(lt.Candidates) {
+		return false
+	}
+	lt.CursorPos++
+	return true
 }
 
 func (e *IBusBambooEngine) updateInputModeLT() {

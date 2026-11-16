@@ -60,6 +60,10 @@ const (
 )
 const (
 	IBusTab             = 0xff09
+	IBusKPMultiply      = 0xffaa
+	IBusKP0             = 0xffb0
+	IBusKP9             = 0xffb9
+	IBusKPEqual         = 0xffbd
 	IBusEnd             = 0xff57
 	IBusColon           = 0x03a
 	IBusLeft            = 0xFF51

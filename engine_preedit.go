@@ -69,6 +69,13 @@ func (e *IBusBambooEngine) preeditProcessKeyEvent(keyVal uint32, keyCode uint32,
 
 	newText, isWordBreakRune := e.getCommitText(keyVal, keyCode, state)
 	isPrintableKey := e.isPrintableKey(state, keyVal)
+	if kpChar, ok := keypadChar(keyVal); ok && isWordBreakRune && newText != "" && isValidState(state) {
+		// Commit the keypad character together with the pending word.
+		// Forwarding the key instead lets clients that apply the commit
+		// late (Chrome on Wayland) put it before the word: "4abc".
+		e.commitPreeditAndResetForWBS(newText+string(kpChar), true)
+		return true, nil
+	}
 	if isWordBreakRune {
 		e.commitPreeditAndResetForWBS(newText, isPrintableKey)
 		return isPrintableKey, nil

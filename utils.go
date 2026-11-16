@@ -198,6 +198,19 @@ func loadDictionary(dataFiles ...string) (map[string]bool, error) {
 	return data, nil
 }
 
+// keypadOffset is the distance between a keypad keysym and the ASCII
+// character it types (KP_0 = 0xffb0 -> '0' = 0x30).
+const keypadOffset = 0xff80
+
+// keypadChar returns the character typed by a keypad key (digits, operators,
+// decimal point) when NumLock is on. Keypad navigation keys are not mapped.
+func keypadChar(keyVal uint32) (rune, bool) {
+	if (keyVal >= IBusKPMultiply && keyVal <= IBusKP9) || keyVal == IBusKPEqual {
+		return rune(keyVal - keypadOffset), true
+	}
+	return 0, false
+}
+
 func isMovementKey(keyVal uint32) bool {
 	var list = []uint32{IBusLeft, IBusRight, IBusUp, IBusDown, IBusPageDown, IBusPageUp, IBusEnd}
 	for _, item := range list {

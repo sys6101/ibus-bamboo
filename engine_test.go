@@ -444,3 +444,119 @@ func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngi
 	}
 	assertFn(t, fe, e)
 }
+
+// Issue #561: keypad keys arrive as KP_* keyvals, which the engine used to
+// forward after committing the preedit. Clients that deliver the commit late
+// (Chrome on Wayland) then showed "4abc" instead of "abc4".
+func TestKeypadKeyCommitsWithPreedit(t *testing.T) {
+	fe := NewFakeEngine()
+	cfg := config.DefaultCfg()
+	cfg.DefaultInputMode = config.PreeditIM
+	inputMethod := bamboo.ParseInputMethod(cfg.InputMethodDefinitions, cfg.InputMethod)
+	e := NewIbusBambooEngine("test", &cfg, fe, bamboo.NewEngine(inputMethod, cfg.Flags))
+
+	for _, key := range "abc" {
+		e.ProcessKeyEvent(uint32(key), 0, 0)
+	}
+	handled, err := e.ProcessKeyEvent(IBusKP0+4, 0, 0)
+	if err != nil || !handled {
+		t.Fatalf("keypad 4 after a pending word: handled=%v err=%v, want handled", handled, err)
+	}
+	if fe.commitText != "abc4" {
+		t.Fatalf("commit text = %q, want %q", fe.commitText, "abc4")
+	}
+
+	handled, _ = e.ProcessKeyEvent(IBusKP0+4, 0, 0)
+	if handled {
+		t.Fatalf("keypad 4 with an empty buffer must be left to the application")
+	}
+	for _, key := range "abc" {
+		e.ProcessKeyEvent(uint32(key), 0, 0)
+	}
+	if handled, _ = e.ProcessKeyEvent(IBusKP0+4, 0, IBusControlMask); handled {
+		t.Fatalf("Ctrl + keypad 4 must be left to the application")
+	}
+}
+
+func TestKeypadChar(t *testing.T) {
+	cases := map[uint32]rune{
+		0xffaa: '*', 0xffab: '+', 0xffad: '-', 0xffae: '.', 0xffaf: '/',
+		0xffb0: '0', 0xffb9: '9', 0xffbd: '=',
+	}
+	for keyVal, want := range cases {
+		if got, ok := keypadChar(keyVal); !ok || got != want {
+			t.Errorf("keypadChar(0x%x) = %q, %v; want %q", keyVal, got, ok, want)
+		}
+	}
+	for _, keyVal := range []uint32{'4', IBusReturn, 0xff8d, 0xff95, 0xffba} {
+		if _, ok := keypadChar(keyVal); ok {
+			t.Errorf("keypadChar(0x%x) should not map to a character", keyVal)
+		}
+	}
+}
+
+// Issue #593: the mode table could be left in a degenerate state. The cursor
+// must start on the active mode and never move past the last row.
+func TestInputModeTableCursorStaysInRange(t *testing.T) {
+	atomic.StoreInt32(&sessionInputMode, 0)
+	defer atomic.StoreInt32(&sessionInputMode, 0)
+
+	e := newTestEngine(config.SurroundingTextIM)
+	openModeTable(t, e)
+	if got := e.inputModeLookupTable.CursorPos; got != config.SurroundingTextIM-1 {
+		t.Fatalf("cursor starts at row %d, want the active mode's row %d", got, config.SurroundingTextIM-1)
+	}
+
+	last := uint32(len(e.inputModeLookupTable.Candidates) - 1)
+	for i := 0; i < len(config.ImLookupTable)+3; i++ {
+		e.ProcessKeyEvent(IBusDown, 0, 0)
+	}
+	if got := e.inputModeLookupTable.CursorPos; got != last {
+		t.Fatalf("cursor after pressing Down past the end = %d, want %d", got, last)
+	}
+
+	e.ProcessKeyEvent(IBusReturn, 0, 0)
+	if e.isInputModeLTOpened {
+		t.Fatalf("Return should close the mode table")
+	}
+	if got := int(atomic.LoadInt32(&sessionInputMode)); got != config.UsIM {
+		t.Fatalf("mode chosen on the last row = %d, want %d", got, config.UsIM)
+	}
+}
+
+func TestEmojiCursorPosBounds(t *testing.T) {
+	e := newTestEngine(config.PreeditIM)
+	lt := ibus.NewLookupTable()
+	lt.PageSize = 9
+	for i := 0; i < 3; i++ {
+		lt.AppendCandidate("x")
+	}
+	e.emojiLookupTable = lt
+	if e.updateCursorPosInEmojiTable(3) {
+		t.Fatalf("index 3 is past the last of 3 candidates")
+	}
+	if e.updateCursorPosInEmojiTable(9) {
+		t.Fatalf("index 9 is outside a page of 9")
+	}
+	if !e.updateCursorPosInEmojiTable(2) || lt.CursorPos != 2 {
+		t.Fatalf("index 2 should select the last candidate, cursor = %d", lt.CursorPos)
+	}
+	for i := 0; i < 5; i++ {
+		lookupTableCursorDown(lt)
+	}
+	if lt.CursorPos != 2 {
+		t.Fatalf("cursor after moving down past the end = %d, want 2", lt.CursorPos)
+	}
+}
+
+func TestEscapeClosesModeTableWithoutReachingApp(t *testing.T) {
+	e := newTestEngine(config.PreeditIM)
+	openModeTable(t, e)
+	handled, err := e.ProcessKeyEvent(IBusEscape, 0, 0)
+	if err != nil || !handled {
+		t.Fatalf("Escape on the mode table: handled=%v err=%v, want handled", handled, err)
+	}
+	if e.isInputModeLTOpened {
+		t.Fatalf("Escape should close the mode table")
+	}
+}

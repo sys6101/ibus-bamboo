@@ -147,12 +147,12 @@ func (e *IBusBambooEngine) emojiProcessKeyEvent(keyVal uint32, keyCode uint32, s
 
 func (e *IBusBambooEngine) updateCursorPosInEmojiTable(idx uint32) bool {
 	pageSize := e.emojiLookupTable.PageSize
-	if idx > pageSize {
+	if idx >= pageSize {
 		return false
 	}
 	page := e.emojiLookupTable.CursorPos / pageSize
 	newPos := page*pageSize + idx
-	if int(newPos) > len(e.emojiLookupTable.Candidates) {
+	if int(newPos) >= len(e.emojiLookupTable.Candidates) {
 		return false
 	}
 	e.emojiLookupTable.CursorPos = newPos
@@ -190,7 +190,7 @@ func (e *IBusBambooEngine) refreshEmojiCandidate() {
 func (e *IBusBambooEngine) closeEmojiCandidates() {
 	e.emojiLookupTable = nil
 	e.emoji.Reset()
-	e.UpdateLookupTable(ibus.NewLookupTable(), true) // workaround for issue #18
+	e.clearLookupTable()
 	e.HidePreeditText()
 	e.HideLookupTable()
 	e.HideAuxiliaryText()

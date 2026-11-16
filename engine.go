@@ -217,10 +217,10 @@ func (e *IBusBambooEngine) CursorUp() *dbus.Error {
 }
 
 func (e *IBusBambooEngine) CursorDown() *dbus.Error {
-	if e.isEmojiLTOpened && e.emojiLookupTable.CursorDown() {
+	if e.isEmojiLTOpened && lookupTableCursorDown(e.emojiLookupTable) {
 		e.updateEmojiLookupTable()
 	}
-	if e.isInputModeLTOpened && e.inputModeLookupTable.CursorDown() {
+	if e.isInputModeLTOpened && lookupTableCursorDown(e.inputModeLookupTable) {
 		e.updateInputModeLT()
 	}
 	return nil
