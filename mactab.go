@@ -28,9 +28,15 @@ import (
 	"time"
 )
 
+const macroWatchInterval = 3 * time.Second
+
+// MacroTable is read by the key handlers and reloaded by a watcher goroutine,
+// so every field is guarded by the embedded mutex.
 type MacroTable struct {
 	sync.RWMutex
 	enable              bool
+	watching            bool // a watcher goroutine is running
+	stale               bool // the table must be reloaded even if the file is unchanged
 	autoCapitalizeMacro bool
 	mTable              map[string]string
 }
@@ -45,7 +51,11 @@ func (e *MacroTable) LoadFromFile(macroFileName string) error {
 		return err
 	}
 	defer f.Close()
-	e.mTable = map[string]string{}
+	e.RLock()
+	autoCapitalize := e.autoCapitalizeMacro
+	e.RUnlock()
+
+	table := map[string]string{}
 	rd := bufio.NewReader(f)
 	for {
 		line, _, err := rd.ReadLine()
@@ -59,21 +69,28 @@ func (e *MacroTable) LoadFromFile(macroFileName string) error {
 		var list = strings.Split(s, ":")
 		if len(list) == 2 {
 			key := strings.TrimSpace(list[0])
-			if e.autoCapitalizeMacro {
+			if autoCapitalize {
 				key = strings.ToLower(key)
 			}
-			e.mTable[key] = strings.TrimSpace(list[1])
+			table[key] = strings.TrimSpace(list[1])
 		}
 	}
+	e.Lock()
+	e.mTable = table
+	e.Unlock()
 	return nil
 }
 
 func (e *MacroTable) Reload(engineName string, autoCapitalizeMacro bool) {
+	e.Lock()
 	e.autoCapitalizeMacro = autoCapitalizeMacro
+	e.Unlock()
 	e.Enable(engineName)
 }
 
 func (e *MacroTable) GetText(key string) string {
+	e.RLock()
+	defer e.RUnlock()
 	if e.autoCapitalizeMacro {
 		key = strings.ToLower(key)
 	}
@@ -81,13 +98,12 @@ func (e *MacroTable) GetText(key string) string {
 }
 
 func (e *MacroTable) HasKey(key string) bool {
-	if e.autoCapitalizeMacro {
-		key = strings.ToLower(key)
-	}
-	return e.mTable[key] != ""
+	return e.GetText(key) != ""
 }
 
 func (e *MacroTable) HasPrefix(key string) bool {
+	e.RLock()
+	defer e.RUnlock()
 	if e.mTable[key] != "" {
 		return true
 	}
@@ -99,27 +115,48 @@ func (e *MacroTable) HasPrefix(key string) bool {
 	return false
 }
 
+// Enable turns the table on and makes sure exactly one watcher goroutine
+// keeps it in sync with the macro file. Calling it again only requests a
+// reload; it never starts a second watcher.
 func (e *MacroTable) Enable(engineName string) {
+	e.Lock()
 	e.enable = true
+	e.stale = true
+	alreadyWatching := e.watching
+	e.watching = true
+	e.Unlock()
+	if alreadyWatching {
+		return
+	}
+	go e.watch(config.GetMacroPath(engineName))
+}
 
-	go func() {
-		modTime := time.Now()
-
-		efPath := config.GetMacroPath(engineName)
-
-		for e.enable {
-			if sta, _ := os.Stat(efPath); sta != nil {
-				if newModeTime := sta.ModTime(); !newModeTime.Equal(modTime) {
-					modTime = newModeTime
-					e.LoadFromFile(efPath)
-				}
-			}
-			time.Sleep(3 * time.Second)
+func (e *MacroTable) watch(path string) {
+	var modTime time.Time
+	for {
+		e.Lock()
+		if !e.enable {
+			e.watching = false
+			e.Unlock()
+			return
 		}
-	}()
+		stale := e.stale
+		e.stale = false
+		e.Unlock()
+
+		if sta, _ := os.Stat(path); sta != nil {
+			if newModTime := sta.ModTime(); stale || !newModTime.Equal(modTime) {
+				modTime = newModTime
+				e.LoadFromFile(path)
+			}
+		}
+		time.Sleep(macroWatchInterval)
+	}
 }
 
 func (e *MacroTable) Disable() {
+	e.Lock()
+	defer e.Unlock()
 	e.enable = false
 	e.mTable = map[string]string{}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 	"os/user"
 
 	"github.com/BambooEngine/bamboo-core"
@@ -66,10 +67,14 @@ func LoadConfig(engineName string) *Config {
 	}
 
 	data, err := ioutil.ReadFile(GetConfigPath(engineName))
-	if err == nil {
-		json.Unmarshal(data, &c)
+	if err != nil {
+		return &c
 	}
-
+	if err := json.Unmarshal(data, &c); err != nil {
+		// A partially decoded config must not be used: fall back to defaults.
+		log.Printf("ignoring invalid config %s: %s", GetConfigPath(engineName), err)
+		c = DefaultCfg()
+	}
 	return &c
 }
 
@@ -79,9 +84,16 @@ func SaveConfig(c *Config, engineName string) {
 		return
 	}
 
-	err = ioutil.WriteFile(fmt.Sprintf(configFile, GetConfigDir(engineName), engineName), data, 0644)
-	if err != nil {
+	// Write to a temporary file and rename it, so an interrupted save can
+	// never leave a truncated config behind.
+	path := GetConfigPath(engineName)
+	tmpPath := path + ".tmp"
+	if err = ioutil.WriteFile(tmpPath, data, 0644); err != nil {
 		log.Println(err)
+		return
 	}
-
+	if err = os.Rename(tmpPath, path); err != nil {
+		log.Println(err)
+		os.Remove(tmpPath)
+	}
 }

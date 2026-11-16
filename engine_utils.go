@@ -24,6 +24,7 @@ import (
 	"ibus-bamboo/config"
 	"ibus-bamboo/ui"
 	"io/ioutil"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -56,7 +57,7 @@ func GetIBusEngineCreator() func(*dbus.Conn, string) dbus.ObjectPath {
 		var objectPath = dbus.ObjectPath(fmt.Sprintf("/org/freedesktop/IBus/Engine/%s/%d", engineName, time.Now().UnixNano()))
 		var inputMethod = bamboo.ParseInputMethod(cfg.InputMethodDefinitions, cfg.InputMethod)
 		baseEngine := ibus.BaseEngine(conn, objectPath)
-		var engine = NewIbusBambooEngine(engineName, config.LoadConfig(engineName), &baseEngine, bamboo.NewEngine(inputMethod, cfg.Flags))
+		var engine = NewIbusBambooEngine(engineName, cfg, &baseEngine, bamboo.NewEngine(inputMethod, cfg.Flags))
 		engine.propList = GetPropListByConfig(cfg)
 		engine.shouldEnqueuKeyStrokes = true
 		ibus.PublishEngine(conn, objectPath, engine)
@@ -81,36 +82,46 @@ func (e *IBusBambooEngine) isShortcutKeyEnable(ski uint) bool {
 }
 
 func (e *IBusBambooEngine) init() {
-	initConfigFiles(e.engineName)
-	e.emoji = NewEmojiEngine()
-	if e.macroTable == nil {
-		e.macroTable = NewMacroTable(e.config.IBflags&config.IBautoCapitalizeMacro != 0)
-		if e.config.IBflags&config.IBmacroEnabled != 0 {
-			e.macroTable.Enable(e.engineName)
-		}
+	// The engine still works with defaults when the config directory or
+	// the sample macro file is unavailable (read-only or missing home).
+	if err := initConfigFiles(e.engineName); err != nil {
+		log.Printf("failed to prepare config files: %s", err)
+	}
+	if e.config.IBflags&config.IBmacroEnabled != 0 {
+		e.macroTable.Enable(e.engineName)
 	}
 	keyPressHandler = e.keyPressForwardHandler
 }
 
-func initConfigFiles(engineName string) {
-	if sta, err := os.Stat(config.GetConfigDir(engineName)); err != nil || !sta.IsDir() {
-		err = os.Mkdir(config.GetConfigDir(engineName), 0777)
-		if err != nil {
-			panic(err)
+func initConfigFiles(engineName string) error {
+	configDir := config.GetConfigDir(engineName)
+	if sta, err := os.Stat(configDir); err != nil || !sta.IsDir() {
+		if err := os.MkdirAll(configDir, 0777); err != nil {
+			return fmt.Errorf("create config dir %s: %w", configDir, err)
 		}
 	}
 	macroPath := config.GetMacroPath(engineName)
 	if _, err := os.Stat(macroPath); os.IsNotExist(err) {
-		sampleFile := getEngineSubFile(sampleMactabFile)
-		sample, err := ioutil.ReadFile(sampleFile)
+		sample, err := ioutil.ReadFile(getEngineSubFile(sampleMactabFile))
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("read sample macro file: %w", err)
 		}
-		err = ioutil.WriteFile(macroPath, sample, 0644)
-		if err != nil {
-			panic(err)
+		if err := ioutil.WriteFile(macroPath, sample, 0644); err != nil {
+			return fmt.Errorf("write macro file %s: %w", macroPath, err)
 		}
 	}
+	return nil
+}
+
+// reloadDictionary loads the spelling dictionary, keeping the current one
+// when the data file cannot be read.
+func reloadDictionary() {
+	dict, err := loadDictionary(DictVietnameseCm)
+	if err != nil {
+		log.Printf("failed to load dictionary from %s: %s", DictVietnameseCm, err)
+		return
+	}
+	dictionary = dict
 }
 
 var keyPressHandler = func(keyVal, keyCode, state uint32) {}

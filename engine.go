@@ -70,6 +70,10 @@ func NewIbusBambooEngine(name string, cfg *config.Config, base IEngine, preedito
 		IEngine:    base,
 		preeditor:  preeditor,
 		config:     cfg,
+		// Created here, not in the asynchronous init, so an early key or
+		// focus event can never see a nil emoji engine or macro table.
+		emoji:      NewEmojiEngine(),
+		macroTable: NewMacroTable(cfg.IBflags&config.IBautoCapitalizeMacro != 0),
 	}
 }
 
@@ -115,14 +119,16 @@ func (e *IBusBambooEngine) FocusIn() *dbus.Error {
 	e.RegisterProperties(e.propList)
 	e.RequireSurroundingText()
 	if e.isShortcutKeyEnable(KSEmojiDialog) && emojiTrie != nil && len(emojiTrie.Children) == 0 {
-		var err error
-		emojiTrie, err = loadEmojiOne(DictEmojiOne)
-		if err != nil {
-			panic(fmt.Sprintf("failed to load emojiTrie from %s: %s", DictEmojiOne, err))
+		// A missing data file only disables emoji input; it must not take
+		// the whole input method down.
+		if trie, err := loadEmojiOne(DictEmojiOne); err != nil {
+			log.Printf("failed to load emoji data from %s: %s", DictEmojiOne, err)
+		} else {
+			emojiTrie = trie
 		}
 	}
 	if e.config.IBflags&config.IBspellCheckWithDicts != 0 && len(dictionary) == 0 {
-		dictionary, _ = loadDictionary(DictVietnameseCm)
+		reloadDictionary()
 	}
 	fmt.Printf("WM_CLASS=(%s)\n", e.getWmClass())
 	return nil
@@ -323,7 +329,7 @@ func (e *IBusBambooEngine) PropertyActivate(propName string, propState uint32) *
 		if propState == ibus.PROP_STATE_CHECKED {
 			e.config.IBflags |= config.IBspellCheckWithDicts
 			turnSpellChecking(true)
-			dictionary, _ = loadDictionary(DictVietnameseCm)
+			reloadDictionary()
 		} else {
 			e.config.IBflags &= ^config.IBspellCheckWithDicts
 		}
