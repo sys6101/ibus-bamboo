@@ -40,6 +40,7 @@ func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 		e.preeditor.Reset()
 		e.resetFakeBackspace()
 		e.needSurroundingSync = true
+		e.screen.forget()
 		e.syncAfterReset = false
 		return false, nil
 	}
@@ -284,6 +285,8 @@ func (e *IBusBambooEngine) getOffsetRunes(newText, oldText string) ([]rune, int)
 }
 
 func (e *IBusBambooEngine) SendBackSpace(n int) {
+	e.waitForScreen()
+	defer e.screen.deleted(n)
 	// Gtk/Qt apps have a serious sync issue with fake backspaces
 	// and normal string committing, so we'll not commit right now
 	// but delay until all the sent backspaces got processed.
@@ -350,6 +353,8 @@ func (e *IBusBambooEngine) bsCommitText(rs []rune) {
 	if len(rs) == 0 {
 		return
 	}
+	e.waitForScreen()
+	defer e.screen.committed(rs)
 	if e.checkInputMode(config.ForwardAsCommitIM) {
 		debugf("Forward as commit %s", string(rs))
 		for _, chr := range rs {

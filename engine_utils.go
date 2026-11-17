@@ -290,6 +290,7 @@ func (e *IBusBambooEngine) resetBuffer() {
 }
 
 func (e *IBusBambooEngine) checkWmClass(newId string) {
+	e.screen.forget()
 	if e.wmClasses != newId {
 		// Flush with the input mode of the window being left. Looking the
 		// mode up after the switch could treat text already committed in a

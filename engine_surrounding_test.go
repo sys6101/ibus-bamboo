@@ -2,6 +2,7 @@ package main
 
 import (
 	"ibus-bamboo/config"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -258,4 +259,92 @@ func TestReportSentAfterAKeyReleaseIsUsed(t *testing.T) {
 	s.e.reset(15) // a click that did not move the cursor
 	s.key(20, 'j')
 	s.wantBuffer("bạn")
+}
+
+func TestExpectedText(t *testing.T) {
+	var screen expectedText
+	screen.committed([]rune("tie"))
+	screen.deleted(1)
+	screen.committed([]rune("ên"))
+	if !screen.known || string(screen.tail) != "tiên" {
+		t.Fatalf("tail = %q known=%v, want \"tiên\"", string(screen.tail), screen.known)
+	}
+	screen.deleted(9)
+	if screen.known {
+		t.Fatalf("deleting more than is tracked must make the tail unknown")
+	}
+	long := []rune(strings.Repeat("a", 2*expectedTailLen))
+	screen.committed(long)
+	if len(screen.tail) != expectedTailLen {
+		t.Fatalf("tail length = %d, want %d", len(screen.tail), expectedTailLen)
+	}
+}
+
+// With text-input-v3, a commit sent before the application applied the
+// previous one replaces it. The engine waits for the report of its last
+// change before sending the next one.
+func TestWaitForScreenBeforeTheNextChange(t *testing.T) {
+	newEngine := func() *IBusBambooEngine {
+		e := newTestEngine(config.SurroundingTextIM)
+		e.capabilities = IBusCapSurroundingText
+		e.screen.committed([]rune("xin ti"))
+		return e
+	}
+
+	t.Run("waits until the application reports the last change", func(t *testing.T) {
+		e := newEngine()
+		e.setSurroundingText(ibusText("xin t"), 5, 5, 1)
+		go func() {
+			time.Sleep(5 * screenWaitInterval)
+			e.setSurroundingText(ibusText("xin ti"), 6, 6, 2)
+		}()
+		start := time.Now()
+		e.Lock()
+		e.waitForScreen()
+		e.Unlock()
+		if waited := time.Since(start); waited < 4*screenWaitInterval {
+			t.Errorf("returned after %v, before the report arrived", waited)
+		}
+	})
+
+	t.Run("an application that does not report is waited for once", func(t *testing.T) {
+		e := newEngine()
+		e.setSurroundingText(ibusText("xin t"), 5, 5, 1)
+		e.Lock()
+		e.waitForScreen()
+		e.screen.committed([]rune("n"))
+		start := time.Now()
+		e.waitForScreen()
+		e.Unlock()
+		if waited := time.Since(start); waited > screenWaitInterval {
+			t.Errorf("second wait took %v, want none after a timeout", waited)
+		}
+	})
+
+	t.Run("no wait without surrounding text support", func(t *testing.T) {
+		e := newEngine()
+		e.capabilities = 0
+		start := time.Now()
+		e.Lock()
+		e.waitForScreen()
+		e.Unlock()
+		if waited := time.Since(start); waited > screenWaitInterval {
+			t.Errorf("waited %v", waited)
+		}
+	})
+}
+
+func TestNoWaitWithoutAPendingCommit(t *testing.T) {
+	e := newTestEngine(config.SurroundingTextIM)
+	e.capabilities = IBusCapSurroundingText
+	e.screen.committed([]rune("xin ti"))
+	e.setSurroundingText(ibusText("xin t"), 5, 5, 1)
+	e.Lock()
+	e.waitForScreen() // waits once for the commit
+	start := time.Now()
+	e.waitForScreen() // e.g. the commit after a deletion
+	e.Unlock()
+	if waited := time.Since(start); waited > screenWaitInterval {
+		t.Errorf("waited %v with no commit pending", waited)
+	}
 }

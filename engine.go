@@ -58,6 +58,9 @@ type IBusBambooEngine struct {
 	// key first rebuilds the composition buffer from the text before the
 	// cursor (see syncWithSurroundingText).
 	needSurroundingSync bool
+	// screen is what the engine expects to be right before the cursor once
+	// the application has applied everything sent to it.
+	screen expectedText
 	// syncAfterReset tells that the pending sync comes from a Reset with
 	// the D-Bus serial resetSerial, rather than from a movement key.
 	syncAfterReset   bool
@@ -290,6 +293,7 @@ func (e *IBusBambooEngine) reset(serial uint32) {
 		// mouse click. The next key checks where the cursor is now.
 		e.resetFakeBackspace()
 		e.needSurroundingSync = true
+		e.screen.forget()
 		e.syncAfterReset = true
 		e.resetSerial = serial
 	}

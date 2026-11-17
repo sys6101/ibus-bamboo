@@ -20,6 +20,7 @@
 package main
 
 import (
+	"ibus-bamboo/config"
 	"reflect"
 	"strings"
 	"sync"
@@ -53,7 +54,10 @@ const (
 // surroundingText is the latest text-before-cursor report. It has its own
 // lock so that storing a report never waits for key handling.
 type surroundingText struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+	// silent is set when the application did not report its text in time;
+	// waiting is skipped until it reports again.
+	silent bool
 	before []rune // text before the cursor
 	serial uint32 // D-Bus serial of the report
 	seen   bool   // a report was received
@@ -96,6 +100,7 @@ func (e *IBusBambooEngine) setSurroundingText(text dbus.Variant, cursorPos uint3
 	if e.surrounding.seen && serialAfter(e.surrounding.serial, serial) {
 		return // an older report handled late
 	}
+	e.surrounding.silent = false
 	e.surrounding.before = before
 	e.surrounding.serial = serial
 	e.surrounding.seen = true
@@ -206,4 +211,99 @@ func (e *IBusBambooEngine) syncWithSurroundingText(arrival keyArrival) {
 		}
 		e.preeditor.ProcessKey(before[i], bamboo.EnglishMode|bamboo.InReverseOrder)
 	}
+}
+
+// expectedText tracks the end of the text before the cursor as it should be
+// once the application has applied every commit and deletion sent to it.
+type expectedText struct {
+	tail  []rune
+	known bool
+	// pendingCommit is set after a commit, until the application has been
+	// seen to apply it or the engine stopped waiting for that.
+	pendingCommit bool
+}
+
+// expectedTailLen bounds how much of the text is tracked.
+const expectedTailLen = 64
+
+func (t *expectedText) committed(s []rune) {
+	t.tail = append(t.tail, s...)
+	if len(t.tail) > expectedTailLen {
+		t.tail = append([]rune(nil), t.tail[len(t.tail)-expectedTailLen:]...)
+	}
+	t.known = true
+	t.pendingCommit = true
+}
+
+func (t *expectedText) deleted(n int) {
+	if !t.known || n > len(t.tail) {
+		t.forget()
+		return
+	}
+	t.tail = t.tail[:len(t.tail)-n]
+	if len(t.tail) == 0 {
+		t.known = false
+	}
+}
+
+func (t *expectedText) forget() {
+	t.tail = nil
+	t.known = false
+	t.pendingCommit = false
+}
+
+const (
+	screenWaitPolls    = 30
+	screenWaitInterval = 2 * time.Millisecond
+)
+
+// waitForScreen waits, for a short bounded time, until the application has
+// reported the text the engine sent last, before sending more.
+//
+// Several commits or deletions that reach an application before it has
+// applied the previous one can be lost: with text-input-v3 (GNOME on
+// Wayland) only the last commit of a batch is applied, and deletions are
+// measured against the last text reported. Fast typing then lost whole
+// words in the backspace input modes.
+//
+// The caller holds the engine lock; it is released while waiting.
+func (e *IBusBambooEngine) waitForScreen() {
+	// Only a commit can be overtaken: a deletion is applied together with
+	// the commit that follows it.
+	if !e.screen.pendingCommit {
+		return
+	}
+	e.screen.pendingCommit = false
+	// XTestFakeKeyEvent mode only works on X11, where the problem does not
+	// occur; it keeps its own timing.
+	if e.checkInputMode(config.XTestFakeKeyEventIM) {
+		return
+	}
+	if !e.screen.known || e.capabilities&IBusCapSurroundingText == 0 ||
+		e.config.OutputCharset != defaultOutputCharset {
+		return
+	}
+	var want = string(e.screen.tail)
+	var shown = func() bool {
+		e.surrounding.mu.Lock()
+		defer e.surrounding.mu.Unlock()
+		return e.surrounding.silent ||
+			(e.surrounding.usable && strings.HasSuffix(string(e.surrounding.before), want))
+	}
+	if shown() {
+		return
+	}
+	e.Unlock()
+	defer e.Lock()
+	for i := 0; i < screenWaitPolls; i++ {
+		time.Sleep(screenWaitInterval)
+		if shown() {
+			return
+		}
+	}
+	// The application does not report every change: do not slow down
+	// every key for it.
+	e.surrounding.mu.Lock()
+	e.surrounding.silent = true
+	e.surrounding.mu.Unlock()
 }
