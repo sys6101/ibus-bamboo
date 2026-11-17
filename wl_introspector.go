@@ -78,7 +78,7 @@ func registerInterface(registry *wl.Registry, ev wl.RegistryGlobalEvent, ctx *wl
 	case "zwlr_foreign_toplevel_manager_v1":
 		manager := NewZwlrForeignToplevelManagerV1(ctx)
 		manager.AddToplevelHandler(toplevelHandlers{adHandler})
-		err := registry.Bind(ev.Name, ev.Interface, ev.Version, manager)
+		err := wlRegistryBind(registry, ev.Name, ev.Interface, ev.Version, manager)
 		if err != nil {
 			return fmt.Errorf("Unable to bind ZwlrForeignToplevelManagerV1 interface: %s", err)
 		}
