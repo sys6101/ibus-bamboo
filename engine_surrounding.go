@@ -21,6 +21,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,10 @@ import (
 // key events may be handled out of order; their message serials tell the
 // real order. Using whichever report came first after a movement key (as the
 // engine used to) often picked one from before the cursor had moved.
+
+// defaultOutputCharset is the charset in which the committed text equals the
+// composition buffer.
+const defaultOutputCharset = "Unicode"
 
 const (
 	surroundingWaitPolls    = 20
@@ -100,39 +105,97 @@ func (e *IBusBambooEngine) setSurroundingText(text dbus.Variant, cursorPos uint3
 // freshSurroundingText returns the report sent for the key event described
 // by arrival, if it has been received.
 func (e *IBusBambooEngine) freshSurroundingText(arrival keyArrival) (before []rune, usable bool, fresh bool) {
+	return e.reportBetween(arrival.prevSerial, arrival.serial)
+}
+
+// reportBetween returns the latest report if its serial is after `after`
+// and before `before`.
+func (e *IBusBambooEngine) reportBetween(after, before uint32) (text []rune, usable bool, ok bool) {
 	e.surrounding.mu.Lock()
 	defer e.surrounding.mu.Unlock()
 	s := &e.surrounding
-	if !s.seen || !serialAfter(s.serial, arrival.prevSerial) || serialAfter(s.serial, arrival.serial) {
+	if !s.seen || !serialAfter(s.serial, after) || serialAfter(s.serial, before) {
 		return nil, false, false
 	}
 	return append([]rune(nil), s.before...), s.usable, true
 }
 
-// syncWithSurroundingText rebuilds the composition buffer after a cursor
-// movement. Without a trustworthy report the buffer stays empty, so the key
-// starts a new word instead of changing text it cannot see. The caller holds
-// the engine lock; it is released while waiting for a report.
+// waitForReport polls get for a short while, with the engine lock released.
+// The caller holds the lock.
+func (e *IBusBambooEngine) waitForReport(get func() ([]rune, bool, bool)) ([]rune, bool, bool) {
+	text, usable, ok := get()
+	if ok || e.capabilities&IBusCapSurroundingText == 0 {
+		return text, usable, ok
+	}
+	e.Unlock()
+	defer e.Lock()
+	for i := 0; i < surroundingWaitPolls && !ok; i++ {
+		time.Sleep(surroundingWaitInterval)
+		text, usable, ok = get()
+	}
+	return text, usable, ok
+}
+
+// syncWithSurroundingText makes the composition buffer match the text
+// before the cursor when the cursor may have moved. The caller holds the
+// engine lock; it is released while waiting for a report.
+//
+// A movement is known from a movement key; the report sent for the next key
+// then shows the new position. A Reset may mean a mouse click, but
+// applications differ: GTK and Qt report the text after the click, while
+// browsers report only after the text changes, so the latest report may
+// predate the click and still be accurate. Some applications (Qt) do not
+// reset on a click at all, so after a pause in typing the buffer is also
+// checked against the reported text.
+//
+// Whenever the position is unknown, the buffer is dropped: the key then
+// starts a new word instead of rewriting text it cannot see.
 func (e *IBusBambooEngine) syncWithSurroundingText(arrival keyArrival) {
-	if !e.needSurroundingSync {
+	var verify = !e.needSurroundingSync && arrival.afterPause && e.getRawKeyLen() > 0
+	if !e.needSurroundingSync && !verify {
 		return
 	}
+	var afterReset, resetSerial = e.syncAfterReset, e.resetSerial
 	e.needSurroundingSync = false
+	e.syncAfterReset = false
 	if arrival.queueWasBusy || atomic.LoadInt32(&e.pendingKeys) > 0 {
 		return // queued keys are still changing the buffer
 	}
-	before, usable, fresh := e.freshSurroundingText(arrival)
-	if !fresh && e.capabilities&IBusCapSurroundingText != 0 {
-		// The report for this key may still be on its way.
-		e.Unlock()
-		for i := 0; i < surroundingWaitPolls && !fresh; i++ {
-			time.Sleep(surroundingWaitInterval)
-			before, usable, fresh = e.freshSurroundingText(arrival)
+	// The buffer can only be compared with the screen when it is shown
+	// as is.
+	var comparable = e.config.OutputCharset == defaultOutputCharset
+	var word = e.getPreeditString()
+
+	var before []rune
+	var usable, ok bool
+	if afterReset {
+		before, usable, ok = e.waitForReport(func() ([]rune, bool, bool) {
+			return e.reportBetween(resetSerial, arrival.serial)
+		})
+		if !ok {
+			// No report since the reset: fall back to the latest one.
+			before, usable, ok = e.reportBetween(arrival.serial-1<<31, arrival.serial)
+			if !ok || !usable || !comparable || !strings.HasSuffix(string(before), word) {
+				e.preeditor.Reset()
+				return
+			}
 		}
-		e.Lock()
+	} else {
+		before, usable, ok = e.waitForReport(func() ([]rune, bool, bool) {
+			return e.freshSurroundingText(arrival)
+		})
+		if verify && !comparable {
+			return
+		}
 	}
-	if !fresh || !usable {
+	if !ok || !usable {
+		if !verify {
+			e.preeditor.Reset()
+		}
 		return
+	}
+	if (verify || afterReset) && comparable && strings.HasSuffix(string(before), word) {
+		return // the cursor is still right after the word being typed
 	}
 	debugf("Surrounding Text: %s", string(before))
 	e.preeditor.Reset()

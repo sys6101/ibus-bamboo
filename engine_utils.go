@@ -94,6 +94,8 @@ var sessionInputMode int32
 // *Msg variants receive the D-Bus message as well, so they are the ones
 // IBus must reach; the plain ones stay for direct callers.
 var engineDBusMethods = map[string]string{
+	"ResetMsg":              "Reset",
+	"Reset":                 "ResetDirect",
 	"ProcessKeyEventMsg":    "ProcessKeyEvent",
 	"ProcessKeyEvent":       "ProcessKeyEventDirect",
 	"SetSurroundingTextMsg": "SetSurroundingText",
@@ -195,6 +197,7 @@ func (e *IBusBambooEngine) keyPressCapturing() {
 			e.Lock()
 			e.keyPressForwardHandler(keyEvents[0], keyEvents[1], keyEvents[2])
 			e.Unlock()
+			e.touchKeyActivity()
 			atomic.AddInt32(&e.pendingKeys, -1)
 		}
 	}
@@ -300,6 +303,7 @@ func (e *IBusBambooEngine) checkWmClass(newId string) {
 		e.resetBuffer()
 		e.resetFakeBackspace()
 		e.needSurroundingSync = false
+		e.syncAfterReset = false
 		e.wmClasses = newId
 	}
 }

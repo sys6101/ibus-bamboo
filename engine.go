@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/BambooEngine/bamboo-core"
 	ibus "github.com/BambooEngine/goibus"
@@ -57,11 +58,17 @@ type IBusBambooEngine struct {
 	// key first rebuilds the composition buffer from the text before the
 	// cursor (see syncWithSurroundingText).
 	needSurroundingSync bool
-	surrounding         surroundingText
-	lastKeySerial       uint32 // serial of the previous key event, atomic
-	localSerial         uint32 // serials for calls that carry none, atomic
-	lastKeyWithShift    bool
-	lastCommitText      int64
+	// syncAfterReset tells that the pending sync comes from a Reset with
+	// the D-Bus serial resetSerial, rather than from a movement key.
+	syncAfterReset   bool
+	resetSerial      uint32
+	surrounding      surroundingText
+	lastKeySerial    uint32 // serial of the previous key event, atomic
+	localSerial      uint32 // serials for calls that carry none, atomic
+	activeKeys       int32  // key events currently inside processKeyEvent, atomic
+	lastKeyActivity  int64  // UnixNano of the last key event or key handling, atomic
+	lastKeyWithShift bool
+	lastCommitText   int64
 	// restore key strokes by pressing Shift + Space
 	shouldRestoreKeyStrokes bool
 	// enqueue key strokes to process later
@@ -182,14 +189,25 @@ type keyArrival struct {
 	// serial and prevSerial are the D-Bus serials of this key event and of
 	// the one before it.
 	serial, prevSerial uint32
+	// afterPause tells whether typing had stopped for a while before this
+	// key, long enough for the cursor to have been moved with the mouse.
+	afterPause bool
 }
 
 func (e *IBusBambooEngine) processKeyEvent(keyVal, keyCode, state, serial uint32) (bool, *dbus.Error) {
-	var arrival = keyArrival{serial: serial, prevSerial: atomic.SwapUint32(&e.lastKeySerial, serial)}
 	if state&IBusReleaseMask != 0 {
-		// fmt.Println("Ignore key-up event")
+		// Releases are not part of the key order used to date surrounding
+		// text reports: browsers report the text after handling a press,
+		// often after its release has been sent.
 		return false, nil
 	}
+	var arrival = keyArrival{serial: serial, prevSerial: atomic.SwapUint32(&e.lastKeySerial, serial)}
+	arrival.afterPause = e.isResetFromOutside()
+	atomic.AddInt32(&e.activeKeys, 1)
+	defer func() {
+		e.touchKeyActivity()
+		atomic.AddInt32(&e.activeKeys, -1)
+	}()
 	if keyVal == IBusBackSpace && e.consumeFakeBackspace() {
 		// One of our own XTest backspaces coming back. It is acknowledged
 		// without the engine lock: the queue goroutine holds that lock
@@ -250,13 +268,50 @@ func (e *IBusBambooEngine) FocusOut() *dbus.Error {
 }
 
 func (e *IBusBambooEngine) Reset() *dbus.Error {
+	e.reset(e.nextLocalSerial())
+	return nil
+}
+
+// ResetMsg is Reset as exported on D-Bus; the message serial dates the reset
+// against the surrounding text reports.
+func (e *IBusBambooEngine) ResetMsg(msg dbus.Message) *dbus.Error {
+	e.reset(msg.Serial())
+	return nil
+}
+
+func (e *IBusBambooEngine) reset(serial uint32) {
 	debugf("Reset.")
 	e.Lock()
 	defer e.Unlock()
 	if e.checkInputMode(config.PreeditIM) {
 		e.preeditor.Reset()
+	} else if e.inBackspaceWhiteList() && e.isResetFromOutside() {
+		// The cursor may have been moved without a key, typically by a
+		// mouse click. The next key checks where the cursor is now.
+		e.resetFakeBackspace()
+		e.needSurroundingSync = true
+		e.syncAfterReset = true
+		e.resetSerial = serial
 	}
-	return nil
+}
+
+// resetQuietPeriod is how long after the last key a Reset is still blamed on
+// that key.
+const resetQuietPeriod = 150 * time.Millisecond
+
+// isResetFromOutside tells whether a Reset comes from something other than
+// typing. Applications also reset the input context while they handle keys,
+// including the backspaces this engine sends to rewrite a word; honoring
+// those would empty the buffer in the middle of a word.
+func (e *IBusBambooEngine) isResetFromOutside() bool {
+	if atomic.LoadInt32(&e.activeKeys) > 0 || atomic.LoadInt32(&e.pendingKeys) > 0 {
+		return false
+	}
+	return time.Now().UnixNano()-atomic.LoadInt64(&e.lastKeyActivity) > int64(resetQuietPeriod)
+}
+
+func (e *IBusBambooEngine) touchKeyActivity() {
+	atomic.StoreInt64(&e.lastKeyActivity, time.Now().UnixNano())
 }
 
 func (e *IBusBambooEngine) Enable() *dbus.Error {

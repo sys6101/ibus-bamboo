@@ -2,6 +2,7 @@ package main
 
 import (
 	"ibus-bamboo/config"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,4 +144,118 @@ func TestFocusChangeDoesNotRecommitBackspaceModeText(t *testing.T) {
 	if e.getRawKeyLen() != 0 {
 		t.Errorf("the composition buffer should be empty after a focus change")
 	}
+}
+
+// A Reset that is not caused by typing may come from a mouse click. The
+// next key checks where the cursor is before touching the buffer.
+func TestResetAfterAClick(t *testing.T) {
+	longAgo := time.Now().Add(-10 * resetQuietPeriod).UnixNano()
+	cases := []struct {
+		name       string
+		mode       int
+		quiet      bool                       // no key activity before the Reset
+		reports    func(s *surroundingScript) // reports sent around the Reset (serial 20)
+		wantBuffer string
+	}{
+		{"click elsewhere, reported after the reset (GTK)", config.BackspaceForwardingIM, true,
+			func(s *surroundingScript) { s.report(19, "xin ban", 7); s.report(21, "x", 1) }, "xj"},
+		{"click elsewhere, the new report is handled late", config.BackspaceForwardingIM, true,
+			func(s *surroundingScript) {
+				s.report(19, "xin ban", 7)
+				go func() { time.Sleep(3 * surroundingWaitInterval); s.report(21, "x", 1) }()
+			}, "xj"},
+		{"click that kept the cursor, no new report (browsers)", config.BackspaceForwardingIM, true,
+			func(s *surroundingScript) { s.report(19, "xin ban", 7) }, "bạn"},
+		{"latest report shows another position", config.BackspaceForwardingIM, true,
+			func(s *surroundingScript) { s.report(19, "xin b", 5) }, "j"},
+		{"no report at all", config.BackspaceForwardingIM, true, func(s *surroundingScript) {}, "j"},
+		{"reset caused by a key just handled", config.BackspaceForwardingIM, false,
+			func(s *surroundingScript) { s.report(21, "x", 1) }, "bạn"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSurroundingScript(t, tc.mode)
+			s.e.capabilities = IBusCapSurroundingText
+			s.keys(10, "ban")
+			if tc.quiet {
+				atomic.StoreInt64(&s.e.lastKeyActivity, longAgo)
+			}
+			tc.reports(s)
+			s.e.reset(20)
+			s.key(30, 'j')
+			s.wantBuffer(tc.wantBuffer)
+		})
+	}
+
+	t.Run("pre-edit mode always resets", func(t *testing.T) {
+		s := newSurroundingScript(t, config.PreeditIM)
+		s.keys(10, "ban")
+		s.e.reset(20)
+		s.wantBuffer("")
+	})
+
+	t.Run("keys still being handled", func(t *testing.T) {
+		s := newSurroundingScript(t, config.BackspaceForwardingIM)
+		s.keys(10, "ban")
+		atomic.StoreInt64(&s.e.lastKeyActivity, longAgo)
+		atomic.AddInt32(&s.e.pendingKeys, 1)
+		s.e.reset(20)
+		atomic.AddInt32(&s.e.pendingKeys, -1)
+		if s.e.needSurroundingSync {
+			t.Errorf("a Reset while keys are queued must not request a sync")
+		}
+	})
+}
+
+// Qt does not reset the input context on a mouse click. After a pause, the
+// buffer is checked against the text before the cursor instead.
+func TestPauseThenMismatchingTextResyncsTheBuffer(t *testing.T) {
+	longAgo := time.Now().Add(-10 * resetQuietPeriod).UnixNano()
+	cases := []struct {
+		name       string
+		pause      bool
+		report     string
+		cursor     uint32
+		wantBuffer string
+	}{
+		{"cursor moved to another place", true, "x", 1, "xj"},
+		{"cursor still after the word", true, "xin ban", 7, "bạn"},
+		{"no pause: the report may predate our last commit", false, "x", 1, "bạn"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSurroundingScript(t, config.BackspaceForwardingIM)
+			s.keys(10, "ban")
+			if tc.pause {
+				atomic.StoreInt64(&s.e.lastKeyActivity, longAgo)
+			}
+			s.report(30, tc.report, tc.cursor)
+			s.key(31, 'j')
+			s.wantBuffer(tc.wantBuffer)
+		})
+	}
+
+	t.Run("other output charsets are left alone", func(t *testing.T) {
+		s := newSurroundingScript(t, config.BackspaceForwardingIM)
+		s.e.config.OutputCharset = "VNI Windows"
+		s.keys(10, "ban")
+		atomic.StoreInt64(&s.e.lastKeyActivity, longAgo)
+		s.report(30, "x", 1)
+		s.key(31, 'j')
+		s.wantBuffer("bạn")
+	})
+}
+
+// Browsers report the surrounding text after handling a key press, which
+// can come after the release of that key. Releases must not move the window
+// in which reports are accepted.
+func TestReportSentAfterAKeyReleaseIsUsed(t *testing.T) {
+	s := newSurroundingScript(t, config.BackspaceForwardingIM)
+	s.keys(10, "ban")
+	s.e.processKeyEvent('n', 0, IBusReleaseMask, 14)
+	s.report(13, "xin ban", 7) // sent after the press of n, handled after its release
+	atomic.StoreInt64(&s.e.lastKeyActivity, time.Now().Add(-10*resetQuietPeriod).UnixNano())
+	s.e.reset(15) // a click that did not move the cursor
+	s.key(20, 'j')
+	s.wantBuffer("bạn")
 }

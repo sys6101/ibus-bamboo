@@ -40,6 +40,7 @@ func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 		e.preeditor.Reset()
 		e.resetFakeBackspace()
 		e.needSurroundingSync = true
+		e.syncAfterReset = false
 		return false, nil
 	}
 	e.syncWithSurroundingText(arrival)
