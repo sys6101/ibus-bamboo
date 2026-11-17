@@ -30,7 +30,22 @@ jobs:
     - name: Use flake devShell
       run: nix develop
 
+  Test:
+    runs-on: ubuntu-latest
+    name: Vet and race-test on Linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libgtk-3-dev
+      - run: test -z "$(gofmt -l *.go config ui)"
+      - run: go vet -mod=vendor ./...
+      - run: go test -mod=vendor -race ./...
+
   Releaser:
+    # Publishing needs the OBS credentials, which only the upstream repository has.
+    if: github.repository == 'BambooEngine/ibus-bamboo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
