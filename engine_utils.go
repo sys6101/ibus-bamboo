@@ -22,7 +22,6 @@ package main
 import (
 	"fmt"
 	"ibus-bamboo/config"
-	"ibus-bamboo/ui"
 	"io/ioutil"
 	"log"
 	"os"
@@ -117,10 +116,6 @@ func GetIBusEngineCreator() func(*dbus.Conn, string) dbus.ObjectPath {
 		ibus.PublishEngine(conn, objectPath, engine)
 		if err := conn.ExportWithMap(engine, engineDBusMethods, objectPath, ibus.IBUS_IFACE_ENGINE); err != nil {
 			log.Printf("failed to export the engine methods: %s", err)
-		}
-		if *gui {
-			ui.OpenGUI(engine.engineName)
-			os.Exit(0)
 		}
 		go engine.init()
 

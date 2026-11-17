@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	ibus "github.com/BambooEngine/goibus"
+
+	"ibus-bamboo/ui"
 )
 
 const (
@@ -55,6 +57,14 @@ func main() {
 	flag.Parse()
 	if *debug {
 		debugEnabled = true
+	}
+	if *gui {
+		// The settings window edits the files of the main engine and needs
+		// no IBus connection. It used to register a standalone engine,
+		// switch the global engine to it, and then open the settings of
+		// that engine instead, panicking when its macro file was missing.
+		ui.OpenGUI(strings.ToLower(EngineName))
+		return
 	}
 	if *embedded {
 		os.Chdir(DataDir)

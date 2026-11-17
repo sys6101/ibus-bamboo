@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"ibus-bamboo/config"
 	"io/ioutil"
+	"log"
 	"os"
 	"unsafe"
 )
@@ -88,9 +89,11 @@ func OpenGUI(engName string) {
 		size          = len(shortcuts)
 		macroFilePath = config.GetMacroPath(engineName)
 	)
+	// The macro file is created on the first engine start; without it the
+	// macro tab simply starts empty.
 	mText, err := ioutil.ReadFile(macroFilePath)
-	if err != nil {
-		panic(err)
+	if err != nil && !os.IsNotExist(err) {
+		log.Printf("cannot read %s: %s", macroFilePath, err)
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
