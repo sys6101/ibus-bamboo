@@ -361,8 +361,18 @@ func (e *IBusBambooEngine) processShortcutKey(keyVal, keyCode, state uint32) (bo
 	// fmt.Println("===Process shortcut for input method switcher")
 	if e.isShortcutKeyPressed(keyVal, state, KSViEnSwitch) {
 		e.englishMode = !e.englishMode
-		notify(e.englishMode)
+		var title = "Vietnamese"
+		if e.englishMode {
+			title = "English"
+		}
+		// Asynchronous: the notification round trip must not stall typing.
+		go notify(title, "Press Shortcut keys to switch input language")
 		e.resetBuffer()
+		return true, true
+	}
+	if e.isShortcutKeyPressed(keyVal, state, KSMacroToggle) {
+		e.resetBuffer()
+		e.toggleMacro()
 		return true, true
 	}
 	// fmt.Println("====== Process shortcut for input mode switch")
@@ -769,13 +779,24 @@ func (e *IBusBambooEngine) checkInputMode(im int) bool {
 	return e.getInputMode() == im
 }
 
-func notify(enMode bool) {
-	var title = "Vietnamese"
-	var msg = "Press Shortcut keys to switch input language"
-	if enMode {
-		title = "English"
-		msg = "Press Shortcut keys to switch input language"
+// toggleMacro turns macro expansion on or off, as the menu entry does.
+func (e *IBusBambooEngine) toggleMacro() {
+	var title = "Gõ tắt: bật"
+	if e.config.IBflags&config.IBmacroEnabled != 0 {
+		e.config.IBflags &= ^config.IBmacroEnabled
+		e.macroTable.Disable()
+		title = "Gõ tắt: tắt"
+	} else {
+		e.config.IBflags |= config.IBmacroEnabled
+		e.macroTable.Enable(e.engineName)
 	}
+	config.SaveConfig(e.config, e.engineName)
+	e.propList = GetPropListByConfig(e.config)
+	e.RegisterProperties(e.propList)
+	go notify(title, "Nhấn lại phím tắt để đổi")
+}
+
+func notify(title, msg string) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		log.Println(err)

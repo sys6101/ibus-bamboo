@@ -71,8 +71,11 @@ func saveShortcuts(ptr *C.guint32, length int) {
 	config.SaveConfig(cfg, engineName)
 }
 
-func makeSliceFromPtr(ptr *C.guint32, size int) [10]uint32 {
-	var out [10]uint32
+func makeSliceFromPtr(ptr *C.guint32, size int) [config.ShortcutSlots]uint32 {
+	var out [config.ShortcutSlots]uint32
+	if size > len(out) {
+		size = len(out)
+	}
 	slice := (*[1 << 28]C.guint32)(unsafe.Pointer(ptr))[:size:size]
 	for i, elem := range slice[:size] {
 		out[i] = uint32(elem)

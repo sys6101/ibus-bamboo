@@ -2,7 +2,7 @@
 #include <gtk/gtk.h>
 #include "_cgo_export.h"
 
-#define TOTAL_ROWS 5
+#define TOTAL_ROWS 6
 #define TOTAL_MASKS_PER_ROW 4
 #define IBworkaroundForFBMessenger 1<<19
 #define IBworkaroundForWPS 1<<20
@@ -26,7 +26,8 @@ int masks[TOTAL_MASKS_PER_ROW] = {GDK_CONTROL_MASK, GDK_MOD1_MASK, GDK_SHIFT_MAS
 int keyvals[TOTAL_MASKS_PER_ROW] = {GDK_KEY_Control_L, GDK_KEY_Alt_L, GDK_KEY_Shift_L,
                            GDK_KEY_Super_L};
 char *text_arr[TOTAL_ROWS] = {"Chuyển chế độ gõ", "Khôi phục phím",
-                                "Tạm tắt bộ gõ", "Emoji", "Hexadecimal"};
+                                "Tạm tắt bộ gõ", "Emoji", "Hexadecimal",
+                                "Bật/tắt gõ tắt"};
 GtkWidget *maskWidgets[TOTAL_MASKS_PER_ROW * TOTAL_ROWS];
 GtkWidget *keyWidgets[TOTAL_ROWS];
 int usIM = 0;
@@ -66,7 +67,7 @@ gint btn_reset_cb(GtkWidget *widget, gpointer *data) {
  * data field.
  */
 void btn_save_cb(GtkWidget *widget, gpointer data) {
-  saveShortcuts(key_pairs_tmp, 10);
+  saveShortcuts(key_pairs_tmp, TOTAL_ROWS * 2);
   close_window_cb(widget, data);
 }
 
@@ -457,7 +458,7 @@ int openGUI(guint flags, int mode, guint32 *s, int size, char *mtext, char *cfg_
   GtkWidget *vbox, *vcbox;
   int which;
   int pad = 10;
-  int arr[10] = {0};
+  int arr[TOTAL_ROWS * 2] = {0};
 
   key_pairs_tmp = s;
 

@@ -18,13 +18,19 @@ const (
 	sampleMactabFile = "data/macro.tpl.txt"
 )
 
+// ShortcutSlots is the length of Config.Shortcuts: a modifier mask and a key
+// for each shortcut (input mode table, restore keys, Vietnamese/English,
+// emoji, hexadecimal, macro on/off). Configs saved with fewer slots load with
+// the missing shortcuts disabled.
+const ShortcutSlots = 12
+
 type Config struct {
 	InputMethod            string
 	InputMethodDefinitions map[string]bamboo.InputMethodDefinition
 	OutputCharset          string
 	Flags                  uint
 	IBflags                uint
-	Shortcuts              [10]uint32
+	Shortcuts              [ShortcutSlots]uint32
 	DefaultInputMode       int
 	InputModeMapping       map[string]int
 }
@@ -52,7 +58,7 @@ func DefaultCfg() Config {
 		InputMethodDefinitions: bamboo.GetInputMethodDefinitions(),
 		Flags:                  bamboo.EstdFlags,
 		IBflags:                IBstdFlags,
-		Shortcuts:              [10]uint32{1, 126, 0, 0, 0, 0, 0, 0, 5, 117},
+		Shortcuts:              [ShortcutSlots]uint32{1, 126, 0, 0, 0, 0, 0, 0, 5, 117},
 		DefaultInputMode:       PreeditIM,
 		InputModeMapping:       map[string]int{},
 	}

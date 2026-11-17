@@ -57,6 +57,7 @@ const (
 	KSViEnSwitch
 	KSEmojiDialog
 	KSHexadecimal
+	KSMacroToggle
 )
 
 var enabledAuxiliaryTextList = []string{
