@@ -232,13 +232,16 @@ func (e *IBusBambooEngine) dequeueKeyPress() ([3]uint32, bool) {
 }
 
 const (
-	queueDrainPolls    = 10
+	queueDrainPolls    = 400
 	queueDrainInterval = 5 * time.Millisecond
 )
 
-// waitForQueueDrain gives the queue goroutine a short, bounded time to
-// finish the keys typed before the current one. The caller holds the engine
-// lock; it is released while waiting because that goroutine needs it.
+// waitForQueueDrain waits, for a bounded time, until the queue goroutine has
+// finished the keys typed before the current one. Keys that are not queued
+// themselves (cursor movement, BackSpace, Enter...) go back to the
+// application, so they must not overtake text that is still being sent.
+// The caller holds the engine lock; it is released while waiting because
+// that goroutine needs it.
 func (e *IBusBambooEngine) waitForQueueDrain() {
 	if atomic.LoadInt32(&e.pendingKeys) <= 0 {
 		return
@@ -248,6 +251,19 @@ func (e *IBusBambooEngine) waitForQueueDrain() {
 	for i := 0; i < queueDrainPolls && atomic.LoadInt32(&e.pendingKeys) > 0; i++ {
 		time.Sleep(queueDrainInterval)
 	}
+}
+
+// pause waits with the engine lock released. Handling one key in the
+// backspace modes takes tens of milliseconds of deliberate waiting; keys
+// typed meanwhile must still be queued and answered right away, because
+// clients order the text they receive by when those answers arrive (GTK4
+// applied a delete after the commit that followed it when answers were
+// held back). The caller holds the engine lock and must not rely on engine
+// state being unchanged across the call.
+func (e *IBusBambooEngine) pause(d time.Duration) {
+	e.Unlock()
+	time.Sleep(d)
+	e.Lock()
 }
 
 // consumeFakeBackspace reports whether a BackSpace key event is one of the

@@ -196,6 +196,40 @@ func TestFifoGateAdmitsInArrivalOrder(t *testing.T) {
 	}
 }
 
+// A BackSpace typed while a tone key is still being handled waits in the
+// queue. The handler drains the queue into one batch of text; BackSpace must
+// not become part of that text.
+func TestQueuedBackspaceIsNotCommittedAsText(t *testing.T) {
+	e, out := newQueuedEngine(config.BackspaceForwardingIM)
+	e.Destroy() // no queue goroutine: the test drives the handler itself
+	time.Sleep(10 * time.Millisecond)
+
+	e.Lock()
+	for _, key := range "chao" {
+		e.keyPressHandler(uint32(key), 0, 0)
+	}
+	e.enqueueKeyPress(IBusBackSpace, 0, 0)
+	e.keyPressHandler('f', 0, 0)
+	buffer := e.getPreeditString()
+	e.Unlock()
+
+	if got := out.committedText(); got != "chaoào" {
+		t.Errorf("committed text = %q, want %q", got, "chaoào")
+	}
+	if buffer != "chà" {
+		t.Errorf("composition buffer after the BackSpace = %q, want %q", buffer, "chà")
+	}
+	out.mu.Lock()
+	forwarded := out.forwardKeyEvent[0]
+	out.mu.Unlock()
+	if forwarded != IBusBackSpace {
+		t.Errorf("last forwarded key = 0x%x, want BackSpace so the application deletes a character", forwarded)
+	}
+	if left := atomic.LoadInt32(&e.pendingKeys); left != 0 {
+		t.Errorf("pending keys = %d, want 0", left)
+	}
+}
+
 func TestDestroyStopsKeyQueue(t *testing.T) {
 	e, _ := newQueuedEngine(config.PreeditIM)
 	e.Destroy()

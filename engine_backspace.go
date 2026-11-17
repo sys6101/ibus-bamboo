@@ -36,6 +36,7 @@ const BACKSPACE_INTERVAL = 0
 // bsProcessKeyEvent handles a key in the backspace input modes.
 func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, state uint32, arrival keyArrival) (bool, *dbus.Error) {
 	if isMovementKey(keyVal) {
+		e.waitForQueueDrain()
 		e.preeditor.Reset()
 		e.resetFakeBackspace()
 		e.needSurroundingSync = true
@@ -108,7 +109,7 @@ func (e *IBusBambooEngine) keyPressHandler(keyVal, keyCode, state uint32) bool {
 	// log.Printf(">>Backspace:ProcessKeyEvent >  %c | keyCode 0x%04x keyVal 0x%04x | %d\n", rune(keyVal), keyCode, keyVal, atomic.LoadInt32(&e.pendingKeys))
 	defer e.updateLastKeyWithShift(keyVal, state)
 	if e.keyPressDelay > 0 {
-		time.Sleep(time.Duration(e.keyPressDelay) * time.Millisecond)
+		e.pause(time.Duration(e.keyPressDelay) * time.Millisecond)
 		e.keyPressDelay = 0
 	}
 	oldText := e.getPreeditString()
@@ -145,7 +146,7 @@ func (e *IBusBambooEngine) keyPressHandler(keyVal, keyCode, state uint32) bool {
 		if e.shouldAppendDeadKey(newText, oldText) {
 			debugf("Append a deadkey")
 			e.bsCommitText([]rune(" "))
-			time.Sleep(10 * time.Millisecond)
+			e.pause(10 * time.Millisecond)
 			e.isFirstTimeSendingBS = false
 			e.SendBackSpace(1)
 		}
@@ -208,6 +209,19 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 			break
 		}
 		var keyVal, keyCode, state = keyEvents[0], keyEvents[1], keyEvents[2]
+		if keyVal == IBusBackSpace || keyVal == IBusTab {
+			// These edit the text instead of adding to it, so they cannot
+			// join the batch (BackSpace used to be committed as the
+			// character U+FF08). Send what is pending, then handle the key
+			// on its own.
+			if isDirty {
+				e.batchCommit(oldText, strings.Join(buffer, ""), nBackSpace, isWordBreakRune)
+			} else {
+				e.bsCommitText(offsetRunes)
+			}
+			e.keyPressForwardHandler(keyVal, keyCode, state)
+			return
+		}
 		isValidKey := isValidState(state) && e.isValidKeyVal(keyVal)
 		if isValidKey {
 			var commitText, isWordBreakRune0 = e.getCommitText(keyVal, keyCode, state)
@@ -275,53 +289,53 @@ func (e *IBusBambooEngine) SendBackSpace(n int) {
 	var now = time.Now()
 	var delta = 50*1000*1000 - (now.UnixNano() - e.lastCommitText)
 	if delta > 0 {
-		time.Sleep(time.Duration(delta) * time.Nanosecond)
+		e.pause(time.Duration(delta) * time.Nanosecond)
 	}
 	if e.checkInputMode(config.XTestFakeKeyEventIM) {
 		e.setFakeBackspace(int32(n))
 		var sleep = func() {
 			var count = 0
 			for e.getFakeBackspace() > 0 && count < 10 {
-				time.Sleep(5 * time.Millisecond)
+				e.pause(5 * time.Millisecond)
 				count++
 			}
 		}
 		debugf("Sending %d backspace via XTestFakeKeyEvent", n)
-		time.Sleep(10 * time.Millisecond)
+		e.pause(10 * time.Millisecond)
 		x11SendBackspace(n, 0)
 		sleep()
-		time.Sleep(time.Duration(n) * (10 + BACKSPACE_INTERVAL) * time.Millisecond)
+		e.pause(time.Duration(n) * (10 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else if e.checkInputMode(config.SurroundingTextIM) {
-		time.Sleep(20 * time.Millisecond)
+		e.pause(20 * time.Millisecond)
 		debugf("Sending %d backspace via SurroundingText", n)
 		e.DeleteSurroundingText(-int32(n), uint32(n))
-		time.Sleep(20 * time.Millisecond)
+		e.pause(20 * time.Millisecond)
 	} else if e.checkInputMode(config.ForwardAsCommitIM) {
-		time.Sleep(20 * time.Millisecond)
+		e.pause(20 * time.Millisecond)
 		debugf("Sending %d backspace via forwardAsCommitIM", n)
 		for i := 0; i < n; i++ {
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, 0)
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, IBusReleaseMask)
 		}
-		time.Sleep(time.Duration(n) * (20 + BACKSPACE_INTERVAL) * time.Millisecond)
+		e.pause(time.Duration(n) * (20 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else if e.checkInputMode(config.ShiftLeftForwardingIM) {
-		time.Sleep(30 * time.Millisecond)
+		e.pause(30 * time.Millisecond)
 		debugf("Sending %d Shift+Left via shiftLeftForwardingIM", n)
 
 		for i := 0; i < n; i++ {
 			e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusShiftMask)
 			e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusReleaseMask)
 		}
-		time.Sleep(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
+		e.pause(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else if e.checkInputMode(config.BackspaceForwardingIM) {
-		time.Sleep(30 * time.Millisecond)
+		e.pause(30 * time.Millisecond)
 		debugf("Sending %d backspace via backspaceForwardingIM", n)
 
 		for i := 0; i < n; i++ {
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, 0)
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, IBusReleaseMask)
 		}
-		time.Sleep(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
+		e.pause(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else {
 		log.Println("SendBackSpace called outside a backspace input mode")
 	}
@@ -345,7 +359,7 @@ func (e *IBusBambooEngine) bsCommitText(rs []rune) {
 			e.ForwardKeyEvent(keyVal, 0, 0)
 			e.ForwardKeyEvent(keyVal, 0, IBusReleaseMask)
 		}
-		time.Sleep(time.Duration(len(rs)) * 5 * time.Millisecond)
+		e.pause(time.Duration(len(rs)) * 5 * time.Millisecond)
 		return
 	}
 	e.commitText(string(rs))

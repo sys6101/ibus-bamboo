@@ -364,6 +364,7 @@ func (e *IBusBambooEngine) SetCapabilities(cap uint32) *dbus.Error {
 	e.Lock()
 	e.capabilities = cap
 	e.Unlock()
+	debugf("SetCapabilities 0x%x (surrounding text: %v)", cap, cap&IBusCapSurroundingText != 0)
 	return nil
 }
 
