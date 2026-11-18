@@ -61,6 +61,7 @@ type fakeEngine struct {
 	isHideLookupTable   bool
 	isReset             bool
 	forwardKeyEvent     [3]uint32
+	forwardedPresses    []uint32
 }
 
 // committedText returns everything committed so far.
@@ -177,6 +178,9 @@ func (e *fakeEngine) ForwardKeyEvent(keyval uint32, keycode uint32, state uint32
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.forwardKeyEvent = [3]uint32{keyval, keycode, state}
+	if state&IBusReleaseMask == 0 {
+		e.forwardedPresses = append(e.forwardedPresses, keyval)
+	}
 }
 
 // @signal(signature="vubu")

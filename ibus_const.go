@@ -57,6 +57,7 @@ const (
 const (
 	XkBackspace = 0x16
 	XkLeft      = 0x71
+	XkDelete    = 0x77
 )
 const (
 	IBusTab             = 0xff09
@@ -73,6 +74,7 @@ const (
 	IBusPageUp          = 0xFF55
 	IBusPageDown        = 0xFF56
 	IBusBackSpace       = 0xff08
+	IBusDelete          = 0xffff
 	IBusReturn          = 0xff0d
 	IBusEscape          = 0xff1b
 	IBusShiftL          = 0xffe1

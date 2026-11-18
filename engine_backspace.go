@@ -326,9 +326,16 @@ func (e *IBusBambooEngine) SendBackSpace(n int) {
 		e.pause(30 * time.Millisecond)
 		debugf("Sending %d Shift+Left via shiftLeftForwardingIM", n)
 
-		for i := 0; i < n; i++ {
-			e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusShiftMask)
-			e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusReleaseMask)
+		if forwardedKeysLoseModifiers() {
+			// Without Shift the Left keys only move the cursor, so delete
+			// the letters after it instead of selecting them.
+			e.forwardKeyTaps(IBusLeft, XkLeft-8, n)
+			e.forwardKeyTaps(IBusDelete, XkDelete-8, n)
+		} else {
+			for i := 0; i < n; i++ {
+				e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusShiftMask)
+				e.ForwardKeyEvent(IBusLeft, XkLeft-8, IBusReleaseMask)
+			}
 		}
 		e.pause(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else if e.checkInputMode(config.BackspaceForwardingIM) {
@@ -355,7 +362,7 @@ func (e *IBusBambooEngine) bsCommitText(rs []rune) {
 	}
 	e.waitForScreen()
 	defer e.screen.committed(rs)
-	if e.checkInputMode(config.ForwardAsCommitIM) {
+	if e.checkInputMode(config.ForwardAsCommitIM) && !forwardedKeysLoseModifiers() {
 		debugf("Forward as commit %s", string(rs))
 		for _, chr := range rs {
 			var keyVal = vnSymMapping[chr]
@@ -369,4 +376,20 @@ func (e *IBusBambooEngine) bsCommitText(rs []rune) {
 		return
 	}
 	e.commitText(string(rs))
+}
+
+func (e *IBusBambooEngine) forwardKeyTaps(keyVal, keyCode uint32, n int) {
+	for i := 0; i < n; i++ {
+		e.ForwardKeyEvent(keyVal, keyCode, 0)
+		e.ForwardKeyEvent(keyVal, keyCode, IBusReleaseMask)
+	}
+}
+
+// forwardedKeysLoseModifiers reports whether forwarded keys reach the apps
+// without their modifiers or keysyms. GNOME Shell on Wayland replays them
+// through Mutter, which uses the modifiers of the real keyboard and maps the
+// keycode with the keymap: a forwarded Shift+Left moves the cursor without
+// selecting, and a letter forwarded with keycode 0 is dropped.
+func forwardedKeysLoseModifiers() bool {
+	return isWayland && isGnome
 }
