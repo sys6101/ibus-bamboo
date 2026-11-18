@@ -780,17 +780,26 @@ func (e *IBusBambooEngine) checkInputMode(im int) bool {
 	return e.effectiveInputMode() == im
 }
 
-// effectiveInputMode is the input mode the engine works in: on GNOME
-// Wayland, the modes that forward keys delete text through the surrounding
-// text instead whenever the application supports it, as forwarded keys do
-// not work there (see forwardedKeysUnreliable). Applications that do not
-// report their surrounding text, such as X11 ones served through XIM, keep
-// their mode: their forwarded keys do not go through GNOME Shell.
+// effectiveInputMode is the input mode the engine works in, which depends
+// on whether the application reports its surrounding text:
+//   - the surrounding text mode deletes with forwarded BackSpace keys in
+//     applications that do not report it, as they ignore deletions through
+//     it (Chromium and Electron applications such as VS Code on X11);
+//   - on GNOME Wayland, the modes that forward keys delete through the
+//     surrounding text when the application reports it, as forwarded keys
+//     do not work there (see forwardedKeysUnreliable). Applications that do
+//     not report it, such as X11 ones served through XIM, keep their mode:
+//     their forwarded keys do not go through GNOME Shell.
 func (e *IBusBambooEngine) effectiveInputMode() int {
 	var im = e.getInputMode()
+	var reported = atomic.LoadInt32(&e.surroundingReported) != 0
 	switch im {
+	case config.SurroundingTextIM:
+		if !reported {
+			return config.BackspaceForwardingIM
+		}
 	case config.BackspaceForwardingIM, config.ShiftLeftForwardingIM, config.ForwardAsCommitIM:
-		if forwardedKeysUnreliable() && atomic.LoadInt32(&e.surroundingReported) != 0 {
+		if forwardedKeysUnreliable() && reported {
 			return config.SurroundingTextIM
 		}
 	}

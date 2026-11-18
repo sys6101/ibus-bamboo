@@ -324,6 +324,7 @@ func TestWaitForScreenBeforeTheNextChange(t *testing.T) {
 	t.Run("no wait without surrounding text support", func(t *testing.T) {
 		e := newEngine()
 		e.capabilities = 0
+		atomic.StoreInt32(&e.surroundingReported, 0)
 		start := time.Now()
 		e.Lock()
 		e.waitForScreen()

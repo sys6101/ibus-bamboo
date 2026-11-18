@@ -3,6 +3,7 @@ package main
 import (
 	"ibus-bamboo/config"
 	"reflect"
+	"sync/atomic"
 	"testing"
 )
 
@@ -84,7 +85,8 @@ func TestForwardAsCommitModeOnGnomeWayland(t *testing.T) {
 
 // Mutter 50.0 to 50.3 drops forwarded keys, so on GNOME Wayland the modes
 // that forward keys delete through the surrounding text when the
-// application reports it.
+// application reports it. Applications that do not report it, such as
+// Chromium on X11, ignore deletions through it.
 func TestForwardingModesUseSurroundingTextOnGnomeWayland(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -100,11 +102,15 @@ func TestForwardingModesUseSurroundingTextOnGnomeWayland(t *testing.T) {
 		{"forward as commit", true, true, config.ForwardAsCommitIM, config.SurroundingTextIM},
 		{"pre-edit", true, true, config.PreeditIM, config.PreeditIM},
 		{"XTest", true, true, config.XTestFakeKeyEventIM, config.XTestFakeKeyEventIM},
+		{"surrounding text, reported", false, true, config.SurroundingTextIM, config.SurroundingTextIM},
+		{"surrounding text, not reported", false, false, config.SurroundingTextIM, config.BackspaceForwardingIM},
+		{"surrounding text, GNOME Wayland, not reported", true, false, config.SurroundingTextIM, config.BackspaceForwardingIM},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			setGnomeWayland(t, tc.gnomeWayland)
 			e := newTestEngine(tc.mode)
+			atomic.StoreInt32(&e.surroundingReported, 0)
 			if tc.reported {
 				e.SetSurroundingText(ibusText("abc"), 3, 3)
 			}

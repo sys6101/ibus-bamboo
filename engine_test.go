@@ -424,7 +424,18 @@ func newTestEngine(inputMode int) *IBusBambooEngine {
 	cfg := config.DefaultCfg()
 	cfg.DefaultInputMode = inputMode
 	inputMethod := bamboo.ParseInputMethod(cfg.InputMethodDefinitions, cfg.InputMethod)
-	return NewIbusBambooEngine("test", &cfg, fe, bamboo.NewEngine(inputMethod, cfg.Flags))
+	e := NewIbusBambooEngine("test", &cfg, fe, bamboo.NewEngine(inputMethod, cfg.Flags))
+	assumeSurroundingText(e, inputMode)
+	return e
+}
+
+// assumeSurroundingText makes an engine in the surrounding text mode work
+// as with an application that reports its text: with one that does not,
+// the engine deletes with forwarded keys instead.
+func assumeSurroundingText(e *IBusBambooEngine, inputMode int) {
+	if inputMode == config.SurroundingTextIM {
+		atomic.StoreInt32(&e.surroundingReported, 1)
+	}
 }
 
 func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngine, IEngine)) {
@@ -437,6 +448,7 @@ func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngi
 		cfg.IBflags |= config.IBmacroEnabled
 	}
 	e := NewIbusBambooEngine(engineName, &cfg, fe, bamboo.NewEngine(inputMethod, cfg.Flags))
+	assumeSurroundingText(e, tc.inputMode)
 	if tc.mTable != nil {
 		e.macroTable = &MacroTable{
 			mTable: tc.mTable,
