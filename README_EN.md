@@ -72,9 +72,13 @@ ibus restart
 
 Check the version in use: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
 
+If `ibus restart` says `Can't connect to IBus` (IBus is not running), start IBus with `ibus-daemon -drx`.
+
 To remove: with option 1 run `sudo ./ibus-bamboo/install.sh uninstall`. With option 2 go back to the apt version with `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
 
 Input modes on Wayland: mode 1 (Pre-edit) works best. Modes 2–5 work on GNOME Wayland with GTK, Qt and Firefox applications.
+
+Chrome, Facebook and Electron applications (VS Code...): mode 1 always underlines the text being typed, as Chrome draws the underline itself; "Hide underline" has no effect there. For no underline use mode 3: in the application, press <kbd>Shift</kbd>+<kbd>~</kbd> and choose 3.
 
 ### Ubuntu and derivatives (PPA)
 

@@ -69,9 +69,13 @@ ibus restart
 
 Kiểm tra bản đang dùng: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
 
+Nếu `ibus restart` báo `Can't connect to IBus` (IBus chưa chạy), khởi động IBus bằng `ibus-daemon -drx`.
+
 Gỡ: với cách 1 chạy `sudo ./ibus-bamboo/install.sh uninstall`. Với cách 2 quay về bản của apt bằng `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
 
 Chế độ gõ trên Wayland: chế độ 1 (Pre-edit) chạy tốt nhất. Các chế độ 2–5 đã chạy được trên GNOME Wayland với ứng dụng GTK, Qt và Firefox.
+
+Chrome, Facebook và các ứng dụng Electron (VS Code...): chế độ 1 luôn có gạch chân dưới chữ đang gõ vì Chrome tự vẽ, tuỳ chọn "Ẩn gạch chân" không có tác dụng. Muốn không có gạch chân thì dùng chế độ 3: đứng trong ứng dụng, bấm <kbd>Shift</kbd>+<kbd>~</kbd> rồi chọn 3.
 
 ### Ubuntu và các distro tương tự (PPA)
 
