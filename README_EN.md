@@ -82,6 +82,8 @@ Chrome, Facebook and Electron applications (VS Code...): mode 1 always underline
 
 ### Ubuntu and derivatives (PPA)
 
+The PPA package (like the AUR, Nixpkgs, Void and OpenBuildService packages below) is the original upstream build, without the fixes in the [prebuilt release](#prebuilt-release-copy-the-files). You can install it from the PPA and then replace the engine as in option 2 above.
+
 ```sh
 sudo add-apt-repository ppa:bamboo-engine/ibus-bamboo
 sudo apt-get update

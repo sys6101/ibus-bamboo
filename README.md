@@ -79,6 +79,8 @@ Chrome, Facebook và các ứng dụng Electron (VS Code...): chế độ 1 luô
 
 ### Ubuntu và các distro tương tự (PPA)
 
+Gói trên PPA (cũng như các gói AUR, Nixpkgs, Void, OpenBuildService bên dưới) là bản gốc của upstream, chưa có các bản sửa ở [bản build sẵn](#cài-bản-build-sẵn-copy-file). Có thể cài từ PPA rồi thay file engine theo cách 2 ở trên.
+
 ```sh
 sudo add-apt-repository ppa:bamboo-engine/ibus-bamboo
 sudo apt-get update
