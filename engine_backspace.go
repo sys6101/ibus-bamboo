@@ -103,6 +103,7 @@ func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 func (e *IBusBambooEngine) keyPressForwardHandler(keyVal, keyCode, state uint32) {
 	ret := e.keyPressHandler(keyVal, keyCode, state)
 	if !ret {
+		e.screen.lose()
 		e.ForwardKeyEvent(keyVal, keyCode, state)
 	}
 }
@@ -237,6 +238,7 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 				e.batchCommit(oldText, strings.Join(buffer, ""), nBackSpace, isWordBreakRune)
 				buffer = []string{""}
 			}
+			e.screen.lose()
 			e.ForwardKeyEvent(keyVal, keyCode, state)
 		}
 	}
@@ -326,7 +328,7 @@ func (e *IBusBambooEngine) SendBackSpace(n int) {
 		e.pause(30 * time.Millisecond)
 		debugf("Sending %d Shift+Left via shiftLeftForwardingIM", n)
 
-		if forwardedKeysLoseModifiers() {
+		if forwardedKeysUnreliable() {
 			// Without Shift the Left keys only move the cursor, so delete
 			// the letters after it instead of selecting them.
 			e.forwardKeyTaps(IBusLeft, XkLeft-8, n)
@@ -362,7 +364,7 @@ func (e *IBusBambooEngine) bsCommitText(rs []rune) {
 	}
 	e.waitForScreen()
 	defer e.screen.committed(rs)
-	if e.checkInputMode(config.ForwardAsCommitIM) && !forwardedKeysLoseModifiers() {
+	if e.checkInputMode(config.ForwardAsCommitIM) && !forwardedKeysUnreliable() {
 		debugf("Forward as commit %s", string(rs))
 		for _, chr := range rs {
 			var keyVal = vnSymMapping[chr]
@@ -385,11 +387,14 @@ func (e *IBusBambooEngine) forwardKeyTaps(keyVal, keyCode uint32, n int) {
 	}
 }
 
-// forwardedKeysLoseModifiers reports whether forwarded keys reach the apps
-// without their modifiers or keysyms. GNOME Shell on Wayland replays them
-// through Mutter, which uses the modifiers of the real keyboard and maps the
-// keycode with the keymap: a forwarded Shift+Left moves the cursor without
-// selecting, and a letter forwarded with keycode 0 is dropped.
-func forwardedKeysLoseModifiers() bool {
+// forwardedKeysUnreliable reports whether keys forwarded to the application
+// may not arrive as sent. GNOME Shell on Wayland replays them through
+// Mutter:
+//   - Mutter 50.0 to 50.3 drops them (GNOME/mutter#4853, fixed in 50.4);
+//   - Mutter uses the modifiers of the real keyboard, so a forwarded
+//     Shift+Left moves the cursor without selecting (GNOME/mutter#5086);
+//   - Mutter maps the keycode with the keymap, so a letter forwarded with
+//     keycode 0 is dropped.
+func forwardedKeysUnreliable() bool {
 	return isWayland && isGnome
 }

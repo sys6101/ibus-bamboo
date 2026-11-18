@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/BambooEngine/bamboo-core"
+	ibus "github.com/BambooEngine/goibus"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -88,6 +89,9 @@ func surroundingString(text dbus.Variant) (str string, ok bool) {
 
 func (e *IBusBambooEngine) setSurroundingText(text dbus.Variant, cursorPos uint32, anchorPos uint32, serial uint32) {
 	str, ok := surroundingString(text)
+	if ok {
+		atomic.StoreInt32(&e.surroundingReported, 1)
+	}
 	var runes = []rune(str)
 	ok = ok && cursorPos == anchorPos && int(cursorPos) <= len(runes)
 	var before []rune
@@ -246,6 +250,13 @@ func (t *expectedText) deleted(n int) {
 	}
 }
 
+// lose marks the text as unknown, as after a key the application handled
+// itself, but keeps a commit that may still be in flight.
+func (t *expectedText) lose() {
+	t.tail = nil
+	t.known = false
+}
+
 func (t *expectedText) forget() {
 	t.tail = nil
 	t.known = false
@@ -255,6 +266,7 @@ func (t *expectedText) forget() {
 const (
 	screenWaitPolls    = 30
 	screenWaitInterval = 2 * time.Millisecond
+	pokeEveryPolls     = 3
 )
 
 // waitForScreen waits, for a short bounded time, until the application has
@@ -279,31 +291,63 @@ func (e *IBusBambooEngine) waitForScreen() {
 	if e.checkInputMode(config.XTestFakeKeyEventIM) {
 		return
 	}
-	if !e.screen.known || e.capabilities&IBusCapSurroundingText == 0 ||
-		e.config.OutputCharset != defaultOutputCharset {
+	// GNOME Shell turns the capability off on every reset: whether the
+	// application has reported its text tells better.
+	if e.capabilities&IBusCapSurroundingText == 0 && atomic.LoadInt32(&e.surroundingReported) == 0 {
+		return
+	}
+	if !e.screen.known || e.config.OutputCharset != defaultOutputCharset {
+		e.keepCommitsApart()
 		return
 	}
 	var want = string(e.screen.tail)
-	var shown = func() bool {
+	var silent bool
+	var check = func() bool {
 		e.surrounding.mu.Lock()
 		defer e.surrounding.mu.Unlock()
-		return e.surrounding.silent ||
-			(e.surrounding.usable && strings.HasSuffix(string(e.surrounding.before), want))
+		silent = e.surrounding.silent
+		return e.surrounding.usable && strings.HasSuffix(string(e.surrounding.before), want)
 	}
-	if shown() {
+	if check() {
+		return
+	}
+	if silent {
+		e.keepCommitsApart()
 		return
 	}
 	e.Unlock()
 	defer e.Lock()
 	for i := 0; i < screenWaitPolls; i++ {
 		time.Sleep(screenWaitInterval)
-		if shown() {
+		// Firefox on GNOME Wayland reports its text when it receives
+		// the next commit, and takes that report before applying it: the
+		// text reported always lags one change behind, and Mutter measures
+		// deletions against it. An empty commit makes it report again.
+		if i%pokeEveryPolls == pokeEveryPolls-1 && forwardedKeysUnreliable() {
+			e.CommitText(ibus.NewText(""))
+		}
+		if check() {
 			return
 		}
 	}
-	// The application does not report every change: do not slow down
-	// every key for it.
+	// The application does not report every change: do not wait for it
+	// again until it reports.
 	e.surrounding.mu.Lock()
 	e.surrounding.silent = true
 	e.surrounding.mu.Unlock()
+}
+
+// commitGap is the time left between two commits that the application has
+// not confirmed. GNOME Shell sends the text of each commit to the
+// application at once but applies it with a "done" event sent once its
+// main loop is idle, so two commits that reach it together collapse into
+// the last one.
+const commitGap = 20 * time.Millisecond
+
+// keepCommitsApart pauses until commitGap has passed since the last commit.
+func (e *IBusBambooEngine) keepCommitsApart() {
+	var elapsed = time.Duration(time.Now().UnixNano() - e.lastCommitText)
+	if elapsed >= 0 && elapsed < commitGap {
+		e.pause(commitGap - elapsed)
+	}
 }

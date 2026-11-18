@@ -1,10 +1,9 @@
 package main
 
 import (
+	"ibus-bamboo/config"
 	"reflect"
 	"testing"
-
-	"ibus-bamboo/config"
 )
 
 func setGnomeWayland(t *testing.T, on bool) {
@@ -80,5 +79,52 @@ func TestForwardAsCommitModeOnGnomeWayland(t *testing.T) {
 				t.Errorf("committed text = %q, want %q", got, tc.wantCommit)
 			}
 		})
+	}
+}
+
+// Mutter 50.0 to 50.3 drops forwarded keys, so on GNOME Wayland the modes
+// that forward keys delete through the surrounding text when the
+// application reports it.
+func TestForwardingModesUseSurroundingTextOnGnomeWayland(t *testing.T) {
+	tests := []struct {
+		name         string
+		gnomeWayland bool
+		reported     bool
+		mode         int
+		want         int
+	}{
+		{"X11", false, true, config.BackspaceForwardingIM, config.BackspaceForwardingIM},
+		{"no surrounding text", true, false, config.BackspaceForwardingIM, config.BackspaceForwardingIM},
+		{"backspace forwarding", true, true, config.BackspaceForwardingIM, config.SurroundingTextIM},
+		{"Shift+Left", true, true, config.ShiftLeftForwardingIM, config.SurroundingTextIM},
+		{"forward as commit", true, true, config.ForwardAsCommitIM, config.SurroundingTextIM},
+		{"pre-edit", true, true, config.PreeditIM, config.PreeditIM},
+		{"XTest", true, true, config.XTestFakeKeyEventIM, config.XTestFakeKeyEventIM},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			setGnomeWayland(t, tc.gnomeWayland)
+			e := newTestEngine(tc.mode)
+			if tc.reported {
+				e.SetSurroundingText(ibusText("abc"), 3, 3)
+			}
+			if got := e.effectiveInputMode(); got != tc.want {
+				t.Errorf("effective mode = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A key the application handles itself changes the text in a way the engine
+// does not know, but a commit sent before it may still be in flight.
+func TestPassedKeyKeepsThePendingCommit(t *testing.T) {
+	var screen expectedText
+	screen.committed([]rune("ab"))
+	screen.lose()
+	if screen.known || len(screen.tail) != 0 {
+		t.Errorf("text still known after a key the application handled: %q", string(screen.tail))
+	}
+	if !screen.pendingCommit {
+		t.Error("the commit sent before the key is no longer pending")
 	}
 }

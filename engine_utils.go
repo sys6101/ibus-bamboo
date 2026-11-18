@@ -777,7 +777,24 @@ func (e *IBusBambooEngine) getLatestWmClass() string {
 }
 
 func (e *IBusBambooEngine) checkInputMode(im int) bool {
-	return e.getInputMode() == im
+	return e.effectiveInputMode() == im
+}
+
+// effectiveInputMode is the input mode the engine works in: on GNOME
+// Wayland, the modes that forward keys delete text through the surrounding
+// text instead whenever the application supports it, as forwarded keys do
+// not work there (see forwardedKeysUnreliable). Applications that do not
+// report their surrounding text, such as X11 ones served through XIM, keep
+// their mode: their forwarded keys do not go through GNOME Shell.
+func (e *IBusBambooEngine) effectiveInputMode() int {
+	var im = e.getInputMode()
+	switch im {
+	case config.BackspaceForwardingIM, config.ShiftLeftForwardingIM, config.ForwardAsCommitIM:
+		if forwardedKeysUnreliable() && atomic.LoadInt32(&e.surroundingReported) != 0 {
+			return config.SurroundingTextIM
+		}
+	}
+	return im
 }
 
 // toggleMacro turns macro expansion on or off, as the menu entry does.

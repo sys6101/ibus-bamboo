@@ -50,6 +50,10 @@ type IBusBambooEngine struct {
 	emojiLookupTable     *ibus.LookupTable
 	inputModeLookupTable *ibus.LookupTable
 	capabilities         uint32
+	// surroundingReported is set (atomically) once the application focused
+	// last has reported its surrounding text. GNOME Shell turns the
+	// capability on and off as it resets, so the capability cannot tell.
+	surroundingReported  int32
 	keyPressDelay        int
 	nFakeBackSpace       int32
 	isFirstTimeSendingBS bool
@@ -233,7 +237,12 @@ func (e *IBusBambooEngine) processKeyEvent(keyVal, keyCode, state, serial uint32
 		return retValue, nil
 	}
 	if e.inBackspaceWhiteList() {
-		return e.bsProcessKeyEvent(keyVal, keyCode, state, arrival)
+		handled, err := e.bsProcessKeyEvent(keyVal, keyCode, state, arrival)
+		if !handled {
+			// The application handles the key itself.
+			e.screen.lose()
+		}
+		return handled, err
 	}
 	return e.preeditProcessKeyEvent(keyVal, keyCode, state)
 }
@@ -244,6 +253,7 @@ func (e *IBusBambooEngine) nextLocalSerial() uint32 {
 
 func (e *IBusBambooEngine) FocusIn() *dbus.Error {
 	debugf("FocusIn.")
+	atomic.StoreInt32(&e.surroundingReported, 0)
 	// The window class lookup talks to X11 or D-Bus; keep it off the lock.
 	var latestWm = e.getLatestWmClass()
 	e.Lock()
