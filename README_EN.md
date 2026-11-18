@@ -17,7 +17,8 @@ If you want to revive ibus-bamboo or discuss the project's future, please visit 
 
 - [Features](#features)
 - [Installation](#installation)
-	- [Ubuntu, Mint and derivatives](#ubuntu-and-derivatives)
+	- [Prebuilt release (copy the files)](#prebuilt-release-copy-the-files)
+	- [Ubuntu, Mint and derivatives](#ubuntu-and-derivatives-ppa)
 	- [Arch Linux and derivatives](#arch-linux-and-derivatives)
 	- [NixOS](#nixos)
 	- [Void Linux](#void-linux)
@@ -45,7 +46,37 @@ If you want to revive ibus-bamboo or discuss the project's future, please visit 
   * 2666 emojis from [emojiOne](https://github.com/joypixels/emojione)
 
 ## Installation
-### Ubuntu and derivatives
+### Prebuilt release (copy the files)
+
+The prebuilt release has the latest fixes (fast typing, Wayland, GNOME 50, Firefox, VS Code...). One build works on both X11 and Wayland, on Ubuntu 22.04, 24.04, 26.04 and other 64-bit distributions with glibc 2.34 or later (Debian 12, Linux Mint 21, Fedora 35...). `ibus` must be installed.
+
+**Option 1: full install** (ibus-bamboo not installed yet, or to overwrite an older one)
+
+```sh
+wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-bamboo-linux-amd64.tar.gz
+tar -xzf ibus-bamboo-linux-amd64.tar.gz
+sudo ./ibus-bamboo/install.sh
+ibus restart
+# Make ibus-bamboo an input source (GNOME)
+gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'Bamboo')]"
+```
+
+**Option 2: replace only the engine** (ibus-bamboo installed from the PPA or apt)
+
+```sh
+wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-engine-bamboo-linux-amd64
+sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
+sudo apt-mark hold ibus-bamboo   # so that 'apt upgrade' does not bring the old one back
+ibus restart
+```
+
+Check the version in use: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
+
+To remove: with option 1 run `sudo ./ibus-bamboo/install.sh uninstall`. With option 2 go back to the apt version with `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
+
+Input modes on Wayland: mode 1 (Pre-edit) works best. Modes 2–5 work on GNOME Wayland with GTK, Qt and Firefox applications.
+
+### Ubuntu and derivatives (PPA)
 
 ```sh
 sudo add-apt-repository ppa:bamboo-engine/ibus-bamboo

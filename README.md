@@ -13,7 +13,8 @@ Nếu bạn muốn cứu sống ibus-bamboo hoặc thảo luận về tương la
 
 - [Sơ lược tính năng](#sơ-lược-tính-năng)
 - [Hướng dẫn cài đặt](#hướng-dẫn-cài-đặt)
-	- [Dành cho Ubuntu, Mint và các distro tương tự](#ubuntu-và-các-distro-tương-tự)
+	- [Cài bản build sẵn (copy file)](#cài-bản-build-sẵn-copy-file)
+	- [Dành cho Ubuntu, Mint và các distro tương tự](#ubuntu-và-các-distro-tương-tự-ppa)
 	- [Dành cho Arch Linux và các distro tương tự](#arch-linux-và-các-distro-tương-tự)
 	- [NixOS](#nixos)
 	- [Void Linux](#void-linux)
@@ -42,7 +43,37 @@ Nếu bạn muốn cứu sống ibus-bamboo hoặc thảo luận về tương la
    ![ibus-bamboo](https://github.com/BambooEngine/ibus-bamboo/raw/gh-resources/demo.gif)
 
 ## Hướng dẫn cài đặt
-### Ubuntu và các distro tương tự
+### Cài bản build sẵn (copy file)
+
+Bản build sẵn có các bản sửa mới nhất (gõ nhanh, Wayland, GNOME 50, Firefox, VS Code...). Một bản dùng chung cho X11 và Wayland, chạy trên Ubuntu 22.04, 24.04, 26.04 và các distro 64-bit có glibc từ 2.34 trở lên (Debian 12, Linux Mint 21, Fedora 35...). Cần đã cài `ibus`.
+
+**Cách 1: cài đầy đủ** (máy chưa có ibus-bamboo, hoặc muốn ghi đè bản cũ)
+
+```sh
+wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-bamboo-linux-amd64.tar.gz
+tar -xzf ibus-bamboo-linux-amd64.tar.gz
+sudo ./ibus-bamboo/install.sh
+ibus restart
+# Đặt ibus-bamboo làm bộ gõ mặc định (GNOME)
+gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'Bamboo')]"
+```
+
+**Cách 2: chỉ thay file engine** (đã cài ibus-bamboo từ PPA hoặc apt)
+
+```sh
+wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-engine-bamboo-linux-amd64
+sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
+sudo apt-mark hold ibus-bamboo   # để 'apt upgrade' không ghi đè lại bản cũ
+ibus restart
+```
+
+Kiểm tra bản đang dùng: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
+
+Gỡ: với cách 1 chạy `sudo ./ibus-bamboo/install.sh uninstall`. Với cách 2 quay về bản của apt bằng `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
+
+Chế độ gõ trên Wayland: chế độ 1 (Pre-edit) chạy tốt nhất. Các chế độ 2–5 đã chạy được trên GNOME Wayland với ứng dụng GTK, Qt và Firefox.
+
+### Ubuntu và các distro tương tự (PPA)
 
 ```sh
 sudo add-apt-repository ppa:bamboo-engine/ibus-bamboo
