@@ -33,6 +33,17 @@ import (
 
 const BACKSPACE_INTERVAL = 0
 
+const (
+	// backspaceAfterCommit is the least time between a commit and the
+	// deletion that follows it.
+	backspaceAfterCommit = 20 * time.Millisecond
+	// backspaceForwardDelay is waited before forwarding BackSpace keys, and
+	// again for each of them, so the application handles them before the
+	// text committed next. 30 ms made typing visibly slow; 15 ms keeps
+	// GTK3, Qt6, Firefox and Chromium correct on X11.
+	backspaceForwardDelay = 15 * time.Millisecond
+)
+
 // bsProcessKeyEvent handles a key in the backspace input modes.
 func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, state uint32, arrival keyArrival) (bool, *dbus.Error) {
 	if isMovementKey(keyVal) {
@@ -212,11 +223,14 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 			break
 		}
 		var keyVal, keyCode, state = keyEvents[0], keyEvents[1], keyEvents[2]
-		if keyVal == IBusBackSpace || keyVal == IBusTab {
-			// These edit the text instead of adding to it, so they cannot
-			// join the batch (BackSpace used to be committed as the
-			// character U+FF08). Send what is pending, then handle the key
-			// on its own.
+		isValidKey := isValidState(state) && e.isValidKeyVal(keyVal)
+		if !isValidKey || keyVal == IBusBackSpace || keyVal == IBusTab {
+			// Keys that do not add text cannot join the batch: BackSpace
+			// and Tab edit the text (BackSpace used to be committed as the
+			// character U+FF08), and Enter or a shortcut must reach the
+			// application after the text typed before it (Enter used to
+			// send a chat message before its last letter). Send what is
+			// pending, then handle the key on its own.
 			if isDirty {
 				e.batchCommit(oldText, strings.Join(buffer, ""), nBackSpace, isWordBreakRune)
 			} else {
@@ -225,22 +239,12 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 			e.keyPressForwardHandler(keyVal, keyCode, state)
 			return
 		}
-		isValidKey := isValidState(state) && e.isValidKeyVal(keyVal)
-		if isValidKey {
-			var commitText, isWordBreakRune0 = e.getCommitText(keyVal, keyCode, state)
-			buffer[len(buffer)-1] = commitText
-			if isWordBreakRune0 {
-				buffer = append(buffer, "")
-			}
-			isDirty = true
-		} else {
-			if isDirty {
-				e.batchCommit(oldText, strings.Join(buffer, ""), nBackSpace, isWordBreakRune)
-				buffer = []string{""}
-			}
-			e.screen.lose()
-			e.ForwardKeyEvent(keyVal, keyCode, state)
+		var commitText, isWordBreakRune0 = e.getCommitText(keyVal, keyCode, state)
+		buffer[len(buffer)-1] = commitText
+		if isWordBreakRune0 {
+			buffer = append(buffer, "")
 		}
+		isDirty = true
 	}
 	if isDirty {
 		e.batchCommit(oldText, strings.Join(buffer, ""), nBackSpace, isWordBreakRune)
@@ -293,7 +297,7 @@ func (e *IBusBambooEngine) SendBackSpace(n int) {
 	// and normal string committing, so we'll not commit right now
 	// but delay until all the sent backspaces got processed.
 	var now = time.Now()
-	var delta = 50*1000*1000 - (now.UnixNano() - e.lastCommitText)
+	var delta = int64(backspaceAfterCommit) - (now.UnixNano() - e.lastCommitText)
 	if delta > 0 {
 		e.pause(time.Duration(delta) * time.Nanosecond)
 	}
@@ -341,14 +345,14 @@ func (e *IBusBambooEngine) SendBackSpace(n int) {
 		}
 		e.pause(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
 	} else if e.checkInputMode(config.BackspaceForwardingIM) {
-		e.pause(30 * time.Millisecond)
+		e.pause(backspaceForwardDelay)
 		debugf("Sending %d backspace via backspaceForwardingIM", n)
 
 		for i := 0; i < n; i++ {
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, 0)
 			e.ForwardKeyEvent(IBusBackSpace, XkBackspace-8, IBusReleaseMask)
 		}
-		e.pause(time.Duration(n) * (30 + BACKSPACE_INTERVAL) * time.Millisecond)
+		e.pause(time.Duration(n) * backspaceForwardDelay)
 	} else {
 		log.Println("SendBackSpace called outside a backspace input mode")
 	}
