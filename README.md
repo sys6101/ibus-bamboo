@@ -4,11 +4,6 @@ IBus Bamboo - Bộ gõ tiếng Việt cho Linux/BSD
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://opensource.org/licenses/GPL-3.0)
 [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/BambooEngine/ibus-bamboo)
 
-## Lưu ý 🚧:
-
-Dự án đã bị đình trệ trong 1 thời gian khá dài và có thể sẽ không được duy trì trong tương lai. Các bạn có thể sử dụng fcitx5-unikey là giải pháp thay thế khác (gần như tính năng đã hoàn thành và hỗ trợ Wayland tốt hơn).
-Nếu bạn muốn cứu sống ibus-bamboo hoặc thảo luận về tương lai của dự án tại đây https://github.com/BambooEngine/ibus-bamboo/issues/590
-
 ## Mục lục
 
 - [Sơ lược tính năng](#sơ-lược-tính-năng)
