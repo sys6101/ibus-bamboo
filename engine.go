@@ -277,6 +277,13 @@ func (e *IBusBambooEngine) FocusIn() *dbus.Error {
 
 func (e *IBusBambooEngine) FocusOut() *dbus.Error {
 	debugf("FocusOut.")
+	// The panel hides the table when the focus leaves. Forget it here too,
+	// or the next Shift+~ would only close a table that is no longer shown.
+	e.Lock()
+	if e.isInputModeLTOpened {
+		e.closeInputModeCandidates()
+	}
+	e.Unlock()
 	return nil
 }
 

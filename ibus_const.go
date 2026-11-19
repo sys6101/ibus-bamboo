@@ -41,8 +41,10 @@ const (
 
 	IBusReleaseMask = 1 << 30
 
-	IBusModifierMask   = 0x5f001fff
-	IBusDefaultModMask = IBusControlMask | IBusShiftMask | IBusMod1Mask | IBusMod4Mask | IBusSuperMask | IBusHyperMask | IBusMetaMask | 0xffeb
+	IBusModifierMask = 0x5f001fff
+	// Only modifiers the user holds. Lock (CapsLock), Mod2 (NumLock), mouse
+	// buttons and the XKB group bits (second layout) must not break shortcuts.
+	IBusDefaultModMask = IBusControlMask | IBusShiftMask | IBusMod1Mask | IBusMod4Mask | IBusSuperMask | IBusHyperMask | IBusMetaMask
 )
 
 const (
