@@ -63,6 +63,9 @@ type surroundingText struct {
 	serial uint32 // D-Bus serial of the report
 	seen   bool   // a report was received
 	usable bool   // the report has a plain cursor (no selection)
+	// selected is set when the report has text selected. Chrome's address
+	// bar selects the completion it suggests after the cursor.
+	selected bool
 }
 
 // serialAfter reports whether serial a was issued after serial b,
@@ -93,6 +96,8 @@ func (e *IBusBambooEngine) setSurroundingText(text dbus.Variant, cursorPos uint3
 		atomic.StoreInt32(&e.surroundingReported, 1)
 	}
 	var runes = []rune(str)
+	debugf("SurroundingText %q cursor=%d anchor=%d serial=%d", str, cursorPos, anchorPos, serial)
+	var selected = ok && cursorPos != anchorPos
 	ok = ok && cursorPos == anchorPos && int(cursorPos) <= len(runes)
 	var before []rune
 	if ok {
@@ -109,6 +114,17 @@ func (e *IBusBambooEngine) setSurroundingText(text dbus.Variant, cursorPos uint3
 	e.surrounding.serial = serial
 	e.surrounding.seen = true
 	e.surrounding.usable = ok
+	e.surrounding.selected = selected
+}
+
+// takeSelection reports whether the latest report has text selected, and
+// clears that until the next report.
+func (e *IBusBambooEngine) takeSelection() bool {
+	e.surrounding.mu.Lock()
+	defer e.surrounding.mu.Unlock()
+	var selected = e.surrounding.selected
+	e.surrounding.selected = false
+	return selected
 }
 
 // freshSurroundingText returns the report sent for the key event described

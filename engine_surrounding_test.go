@@ -349,3 +349,31 @@ func TestNoWaitWithoutAPendingCommit(t *testing.T) {
 		t.Errorf("waited %v with no commit pending", waited)
 	}
 }
+
+// Chrome's address bar completes "a" to "a|mazon.com" with the completion
+// selected, and a deletion then removes only the selection: "aa" gave "aâ"
+// on GNOME Wayland, where the window class (and so the browser workaround)
+// is unknown. The selection in the report must trigger the workaround.
+func TestDeletionWithASelectedCompletion(t *testing.T) {
+	s := newSurroundingScript(t, config.SurroundingTextIM)
+	fe := s.e.IEngine.(*fakeEngine)
+	s.key(10, 'a')
+	fe.selectAfterCursor("mazon.com")
+	s.e.setSurroundingText(ibusText("amazon.com"), 1, 10, 11)
+	s.key(12, 'a')
+	if got := fe.committedText(); got != "â" {
+		t.Errorf("text = %q, want %q", got, "â")
+	}
+}
+
+// Without a selection no extra space is committed.
+func TestDeletionWithoutSelectionCommitsNoSpace(t *testing.T) {
+	s := newSurroundingScript(t, config.SurroundingTextIM)
+	fe := s.e.IEngine.(*fakeEngine)
+	s.key(10, 'a')
+	s.report(11, "a", 1)
+	s.key(12, 'a')
+	if got := fe.committedText(); got != "â" {
+		t.Errorf("text = %q, want %q", got, "â")
+	}
+}

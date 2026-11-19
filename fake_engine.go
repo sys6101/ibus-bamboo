@@ -62,13 +62,24 @@ type fakeEngine struct {
 	isReset             bool
 	forwardKeyEvent     [3]uint32
 	forwardedPresses    []uint32
+	// selection is selected text right after the cursor, like the
+	// completion Chrome's address bar suggests. A commit replaces it; a
+	// deletion only removes it, as in Chrome.
+	selection string
 }
 
-// committedText returns everything committed so far.
+// committedText returns the text: everything committed so far, followed by
+// the selection.
 func (e *fakeEngine) committedText() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.commitText
+	return e.commitText + e.selection
+}
+
+func (e *fakeEngine) selectAfterCursor(s string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.selection = s
 }
 
 func NewFakeEngine() *fakeEngine {
@@ -170,6 +181,9 @@ func (e *fakeEngine) Destroy() *dbus.Error {
 func (e *fakeEngine) CommitText(text *ibus.Text) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if text.Text != "" {
+		e.selection = ""
+	}
 	e.commitText += text.Text
 }
 
@@ -269,6 +283,12 @@ func (e *fakeEngine) UpdateProperty(prop *ibus.Property) {
 
 // @signal(signature="iu")
 func (e *fakeEngine) DeleteSurroundingText(offset_from_cursor int32, nchars uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.selection != "" {
+		e.selection = ""
+		return
+	}
 	s := []rune(e.commitText)
 	var txt string
 	for _, ch := range s[:len(s)-int(nchars)] {

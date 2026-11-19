@@ -188,12 +188,16 @@ func (e *IBusBambooEngine) shouldAppendDeadKey(newText, oldText string) bool {
 	var newRunes = []rune(newText)
 	var offset = e.getPreeditOffset(newRunes, oldRunes)
 
-	// workaround for chrome and firefox's address bar
-	if e.isFirstTimeSendingBS && offset < len(newRunes) && offset < len(oldRunes) && e.inBrowserList() &&
-		!e.checkInputMode(config.ShiftLeftForwardingIM) {
-		return true
+	if offset >= len(newRunes) || offset >= len(oldRunes) || e.checkInputMode(config.ShiftLeftForwardingIM) {
+		return false
 	}
-	return false
+	// Workaround for the address bars of Chrome and Firefox: they select
+	// the completion they suggest after the cursor, and a deletion then
+	// removes that selection instead of the letter ("aa" gave "aâ"). A space
+	// replaces the selection first. The window class is unknown on GNOME
+	// Wayland, so a selection in the surrounding text also tells.
+	var selected = e.takeSelection()
+	return selected || (e.isFirstTimeSendingBS && e.inBrowserList())
 }
 
 func (e *IBusBambooEngine) updatePreviousText(oldText, newText string) {
