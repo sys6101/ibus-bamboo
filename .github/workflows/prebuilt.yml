@@ -1,0 +1,126 @@
+name: Prebuilt release
+
+# Builds the prebuilt release and publishes it as the release named after the
+# version in the Makefile. A new build of the same version replaces the files
+# of that release; the files are named after the build commit
+# (scripts/build-commit.sh), so a push that only changes documentation builds
+# nothing.
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even if the release already has the files of this commit'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Version and build commit
+    # The upstream repository publishes through OpenBuildService instead.
+    if: github.repository != 'BambooEngine/ibus-bamboo'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      commit: ${{ steps.info.outputs.commit }}
+      build: ${{ steps.info.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -eu
+          version=$(sed -n 's/^version=//p' Makefile)
+          commit=$(scripts/build-commit.sh)
+          build=true
+          if [ "$FORCE" != true ] &&
+            gh release view "$version" --json assets --jq '.assets[].name' 2>/dev/null | grep -q -- "-$commit-x86_64"; then
+            echo "Release $version already has the files of $commit"
+            build=false
+          fi
+          echo "version=$version commit=$commit build=$build"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+
+  build:
+    name: Build (x86_64)
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    # Ubuntu 22.04 has glibc 2.34, the oldest the release supports.
+    container: ubuntu:22.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git golang-go gcc libc6-dev pkg-config libgtk-3-dev libx11-dev libxtst-dev
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/build-release.sh "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.commit }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/*
+
+  release:
+    name: Publish the release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Notes cover the commits since the previous version, which may be
+          # an upstream tag (v0.8.5) the fork does not have.
+          git fetch -q --tags https://github.com/BambooEngine/ibus-bamboo.git || true
+          prev=$(git describe --tags --abbrev=0 --exclude "$VERSION" HEAD 2>/dev/null || true)
+          scripts/release-notes.sh "$prev" HEAD "$VERSION" "$COMMIT" >notes.md
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            # Same version, new build: move the tag here and replace the files.
+            git tag -f "$VERSION" HEAD
+            git push -f origin "refs/tags/$VERSION"
+            gh release edit "$VERSION" --notes-file notes.md --latest
+            gh release upload "$VERSION" dist/* --clobber
+            gh release view "$VERSION" --json assets --jq '.assets[].name' | while read -r name; do
+              case $name in
+              SHA256SUMS | *"-$COMMIT-x86_64"*) ;;
+              *)
+                echo "Removing old file: $name"
+                gh release delete-asset "$VERSION" "$name" --yes
+                ;;
+              esac
+            done
+          else
+            gh release create "$VERSION" dist/* --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md --latest
+          fi
