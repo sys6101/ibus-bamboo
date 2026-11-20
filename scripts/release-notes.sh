@@ -28,10 +28,10 @@ ENGINE=ibus-engine-bamboo-$VERSION-$COMMIT-x86_64
 FENCE='```'
 cat <<EOF
 ## Cài đặt
-Xem [README](https://github.com/vupn0712/ibus-bamboo#cài-bản-build-sẵn-copy-file). Chỉ thay file engine khi đã cài:
+Xem [README](https://github.com/sys6101/ibus-bamboo#cài-bản-build-sẵn-copy-file). Chỉ thay file engine khi đã cài:
 
 ${FENCE}sh
-wget -O ibus-engine-bamboo-linux-amd64 https://github.com/vupn0712/ibus-bamboo/releases/download/$VERSION/$ENGINE
+wget -O ibus-engine-bamboo-linux-amd64 https://github.com/sys6101/ibus-bamboo/releases/download/$VERSION/$ENGINE
 ibus exit
 sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
 sudo apt-mark hold ibus-bamboo

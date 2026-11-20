@@ -43,12 +43,12 @@ IBus Bamboo is a Vietnamese input method engine for IBus that translates key str
 ## Installation
 ### Prebuilt release (copy the files)
 
-The prebuilt release has the latest fixes (fast typing, Wayland, GNOME 50, Firefox, VS Code...). One build works on both X11 and Wayland, on Ubuntu 22.04, 24.04, 26.04 and other x86_64 distributions with glibc 2.34 or later (Debian 12, Linux Mint 21, Fedora 35...). `ibus` and `curl` must be installed. The latest files can also be downloaded by hand from the [Releases](https://github.com/vupn0712/ibus-bamboo/releases/latest) page.
+The prebuilt release has the latest fixes (fast typing, Wayland, GNOME 50, Firefox, VS Code...). One build works on both X11 and Wayland, on Ubuntu 22.04, 24.04, 26.04 and other x86_64 distributions with glibc 2.34 or later (Debian 12, Linux Mint 21, Fedora 35...). `ibus` and `curl` must be installed. The latest files can also be downloaded by hand from the [Releases](https://github.com/sys6101/ibus-bamboo/releases/latest) page.
 
 **Option 1: full install** (ibus-bamboo not installed yet, or to overwrite an older one)
 
 ```sh
-url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-bamboo-[^"]*-x86_64\.tar\.gz"' | cut -d'"' -f4)
+url=$(curl -fsSL https://api.github.com/repos/sys6101/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-bamboo-[^"]*-x86_64\.tar\.gz"' | cut -d'"' -f4)
 wget -O ibus-bamboo.tar.gz "$url"
 tar -xzf ibus-bamboo.tar.gz
 ibus exit
@@ -61,7 +61,7 @@ gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 
 **Option 2: replace only the engine** (ibus-bamboo installed from the PPA or apt)
 
 ```sh
-url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-engine-bamboo-[^"]*-x86_64"' | cut -d'"' -f4)
+url=$(curl -fsSL https://api.github.com/repos/sys6101/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-engine-bamboo-[^"]*-x86_64"' | cut -d'"' -f4)
 wget -O ibus-engine-bamboo-linux-amd64 "$url"
 ibus exit
 sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
