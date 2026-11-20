@@ -45,7 +45,7 @@ Bản build sẵn có các bản sửa mới nhất (gõ nhanh, Wayland, GNOME 5
 **Cách 1: cài đầy đủ** (máy chưa có ibus-bamboo, hoặc muốn ghi đè bản cũ)
 
 ```sh
-url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-bamboo-[^"/]*-x86_64\.tar\.gz')
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-bamboo-[^"]*-x86_64\.tar\.gz"' | cut -d'"' -f4)
 wget -O ibus-bamboo.tar.gz "$url"
 tar -xzf ibus-bamboo.tar.gz
 ibus exit
@@ -58,7 +58,7 @@ gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 
 **Cách 2: chỉ thay file engine** (đã cài ibus-bamboo từ PPA hoặc apt)
 
 ```sh
-url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-engine-bamboo-[^"/]*-x86_64')
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o '"browser_download_url": *"[^"]*/ibus-engine-bamboo-[^"]*-x86_64"' | cut -d'"' -f4)
 wget -O ibus-engine-bamboo-linux-amd64 "$url"
 ibus exit
 sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
