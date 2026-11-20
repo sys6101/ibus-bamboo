@@ -43,15 +43,17 @@ IBus Bamboo is a Vietnamese input method engine for IBus that translates key str
 ## Installation
 ### Prebuilt release (copy the files)
 
-The prebuilt release has the latest fixes (fast typing, Wayland, GNOME 50, Firefox, VS Code...). One build works on both X11 and Wayland, on Ubuntu 22.04, 24.04, 26.04 and other 64-bit distributions with glibc 2.34 or later (Debian 12, Linux Mint 21, Fedora 35...). `ibus` must be installed.
+The prebuilt release has the latest fixes (fast typing, Wayland, GNOME 50, Firefox, VS Code...). One build works on both X11 and Wayland, on Ubuntu 22.04, 24.04, 26.04 and other x86_64 distributions with glibc 2.34 or later (Debian 12, Linux Mint 21, Fedora 35...). `ibus` and `curl` must be installed. The latest files can also be downloaded by hand from the [Releases](https://github.com/vupn0712/ibus-bamboo/releases/latest) page.
 
 **Option 1: full install** (ibus-bamboo not installed yet, or to overwrite an older one)
 
 ```sh
-wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-bamboo-linux-amd64.tar.gz
-tar -xzf ibus-bamboo-linux-amd64.tar.gz
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-bamboo-[^"/]*-x86_64\.tar\.gz')
+wget -O ibus-bamboo.tar.gz "$url"
+tar -xzf ibus-bamboo.tar.gz
+ibus exit
 sudo ./ibus-bamboo/install.sh
-ibus restart
+ibus-daemon -drx
 # Make ibus-bamboo an input source (GNOME)
 gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'Bamboo')]"
 ```
@@ -59,15 +61,17 @@ gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 
 **Option 2: replace only the engine** (ibus-bamboo installed from the PPA or apt)
 
 ```sh
-wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-engine-bamboo-linux-amd64
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-engine-bamboo-[^"/]*-x86_64')
+wget -O ibus-engine-bamboo-linux-amd64 "$url"
+ibus exit
 sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
 sudo apt-mark hold ibus-bamboo   # so that 'apt upgrade' does not bring the old one back
-ibus restart
+ibus-daemon -drx
 ```
 
 Check the version in use: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
 
-If `ibus restart` says `Can't connect to IBus` (IBus is not running), start IBus with `ibus-daemon -drx`.
+`ibus exit` stops IBus before the files are replaced, and `ibus-daemon -drx` starts it again with the new engine. If `ibus exit` says `Can't connect to IBus` (IBus is not running), ignore it.
 
 To remove: with option 1 run `sudo ./ibus-bamboo/install.sh uninstall`. With option 2 go back to the apt version with `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
 

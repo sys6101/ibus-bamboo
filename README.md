@@ -40,15 +40,17 @@ IBus Bamboo - Bộ gõ tiếng Việt cho Linux/BSD
 ## Hướng dẫn cài đặt
 ### Cài bản build sẵn (copy file)
 
-Bản build sẵn có các bản sửa mới nhất (gõ nhanh, Wayland, GNOME 50, Firefox, VS Code...). Một bản dùng chung cho X11 và Wayland, chạy trên Ubuntu 22.04, 24.04, 26.04 và các distro 64-bit có glibc từ 2.34 trở lên (Debian 12, Linux Mint 21, Fedora 35...). Cần đã cài `ibus`.
+Bản build sẵn có các bản sửa mới nhất (gõ nhanh, Wayland, GNOME 50, Firefox, VS Code...). Một bản dùng chung cho X11 và Wayland, chạy trên Ubuntu 22.04, 24.04, 26.04 và các distro x86_64 có glibc từ 2.34 trở lên (Debian 12, Linux Mint 21, Fedora 35...). Cần đã cài `ibus` và `curl`. Có thể tải tay file mới nhất ở trang [Releases](https://github.com/vupn0712/ibus-bamboo/releases/latest).
 
 **Cách 1: cài đầy đủ** (máy chưa có ibus-bamboo, hoặc muốn ghi đè bản cũ)
 
 ```sh
-wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-bamboo-linux-amd64.tar.gz
-tar -xzf ibus-bamboo-linux-amd64.tar.gz
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-bamboo-[^"/]*-x86_64\.tar\.gz')
+wget -O ibus-bamboo.tar.gz "$url"
+tar -xzf ibus-bamboo.tar.gz
+ibus exit
 sudo ./ibus-bamboo/install.sh
-ibus restart
+ibus-daemon -drx
 # Đặt ibus-bamboo làm bộ gõ mặc định (GNOME)
 gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'Bamboo')]"
 ```
@@ -56,15 +58,17 @@ gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 
 **Cách 2: chỉ thay file engine** (đã cài ibus-bamboo từ PPA hoặc apt)
 
 ```sh
-wget https://github.com/vupn0712/ibus-bamboo/releases/latest/download/ibus-engine-bamboo-linux-amd64
+url=$(curl -fsSL https://api.github.com/repos/vupn0712/ibus-bamboo/releases/latest | grep -o 'https://[^"]*/ibus-engine-bamboo-[^"/]*-x86_64')
+wget -O ibus-engine-bamboo-linux-amd64 "$url"
+ibus exit
 sudo install -m 755 ibus-engine-bamboo-linux-amd64 /usr/lib/ibus-bamboo/ibus-engine-bamboo
 sudo apt-mark hold ibus-bamboo   # để 'apt upgrade' không ghi đè lại bản cũ
-ibus restart
+ibus-daemon -drx
 ```
 
 Kiểm tra bản đang dùng: `/usr/lib/ibus-bamboo/ibus-engine-bamboo -version`.
 
-Nếu `ibus restart` báo `Can't connect to IBus` (IBus chưa chạy), khởi động IBus bằng `ibus-daemon -drx`.
+`ibus exit` tắt IBus trước khi thay file, `ibus-daemon -drx` khởi động lại IBus với engine mới. Nếu `ibus exit` báo `Can't connect to IBus` (IBus chưa chạy) thì bỏ qua.
 
 Gỡ: với cách 1 chạy `sudo ./ibus-bamboo/install.sh uninstall`. Với cách 2 quay về bản của apt bằng `sudo apt-mark unhold ibus-bamboo && sudo apt install --reinstall ibus-bamboo`.
 
